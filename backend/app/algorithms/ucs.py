@@ -3,7 +3,7 @@ from __future__ import annotations
 import heapq
 import time
 
-from app.utils.metrics import CostMatrixResult, evaluate_route_metrics
+from app.utils.metrics import CostMatrixResult, evaluate_route_metrics, get_objective_weights
 
 DEFAULT_MAX_NODES_EXPANDED = 150_000
 MAX_EXACT_DISTRIBUTORS = 12
@@ -13,21 +13,28 @@ def run_ucs(
     matrix: CostMatrixResult,
     return_to_office: bool = True,
     max_nodes_expanded: int = DEFAULT_MAX_NODES_EXPANDED,
+    optimization_objective: str | None = None,
 ) -> dict:
     """
     Week 4 Baseline: Uniform Cost Search (UCS) — UNINFORMED cost-based search.
     Expands states strictly in order of cumulative path cost g(n) without any heuristic.
-    Optimal for non-negative edge weights.
+    Minimizes cumulative travel duration in FASTEST_TIME mode or road distance in SHORTEST_DISTANCE mode.
+    Supports directed/asymmetric edge weights.
     """
     start_t = time.perf_counter()
     num_distributors = len(matrix.nodes) - 1
+    weights, resolved_obj = get_objective_weights(matrix, optimization_objective)
+    unit_label = "travel time (min)" if resolved_obj == "FASTEST_TIME" else "road distance (km)"
     objective_description = (
-        "Uninformed cost-based search minimizing cumulative simulated distance g(n) without a heuristic."
+        f"Uninformed cost-based search minimizing cumulative {unit_label} g(n) without a heuristic."
     )
 
     if num_distributors <= 0:
         return {
             "algorithm": "UCS",
+            "optimizationObjective": resolved_obj,
+            "dataSource": matrix.dataSource,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
             "isInformed": False,
             "isOptimalForObjective": True,
             "objectiveDescription": objective_description,
@@ -35,6 +42,8 @@ def run_ucs(
             "totalCost": 0.0,
             "estimatedDistanceKm": 0.0,
             "estimatedDurationMinutes": 0.0,
+            "totalStaticDurationMinutes": 0.0,
+            "trafficDelayMinutes": 0.0,
             "edgeCount": 0,
             "nodesExpanded": 1,
             "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -44,6 +53,9 @@ def run_ucs(
     if num_distributors > MAX_EXACT_DISTRIBUTORS:
         return {
             "algorithm": "UCS",
+            "optimizationObjective": resolved_obj,
+            "dataSource": matrix.dataSource,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
             "isInformed": False,
             "isOptimalForObjective": False,
             "objectiveDescription": objective_description,
@@ -51,6 +63,8 @@ def run_ucs(
             "totalCost": 0.0,
             "estimatedDistanceKm": 0.0,
             "estimatedDurationMinutes": 0.0,
+            "totalStaticDurationMinutes": 0.0,
+            "trafficDelayMinutes": 0.0,
             "edgeCount": 0,
             "nodesExpanded": 0,
             "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -59,7 +73,6 @@ def run_ucs(
         }
 
     full_mask = (1 << num_distributors) - 1
-    weights = matrix.distanceKm
 
     def encode_state(node: int, mask: int, returned: int) -> int:
         return (returned << 20) | (node << 14) | mask
@@ -71,7 +84,6 @@ def run_ucs(
     best_g[start_key] = 0.0
     parent_map[start_key] = (None, 0)
 
-    # Heap entries: (priority_g, tie_counter, key, node, mask, returned, g)
     tie = 0
     heap: list[tuple[float, int, int, int, int, int, float]] = [
         (0.0, tie, start_key, 0, 0, 0, 0.0)
@@ -87,6 +99,9 @@ def run_ucs(
         if nodes_expanded >= max_nodes_expanded:
             return {
                 "algorithm": "UCS",
+                "optimizationObjective": resolved_obj,
+                "dataSource": matrix.dataSource,
+                "trafficCalculatedAt": matrix.trafficCalculatedAt,
                 "isInformed": False,
                 "isOptimalForObjective": False,
                 "objectiveDescription": objective_description,
@@ -94,6 +109,8 @@ def run_ucs(
                 "totalCost": 0.0,
                 "estimatedDistanceKm": 0.0,
                 "estimatedDurationMinutes": 0.0,
+                "totalStaticDurationMinutes": 0.0,
+                "trafficDelayMinutes": 0.0,
                 "edgeCount": 0,
                 "nodesExpanded": nodes_expanded,
                 "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -116,16 +133,21 @@ def run_ucs(
                 cursor = prev_key
             route_order.reverse()
 
-            metrics = evaluate_route_metrics(matrix, route_order)
+            metrics = evaluate_route_metrics(matrix, route_order, resolved_obj)
             return {
                 "algorithm": "UCS",
+                "optimizationObjective": resolved_obj,
+                "dataSource": matrix.dataSource,
+                "trafficCalculatedAt": matrix.trafficCalculatedAt,
                 "isInformed": False,
                 "isOptimalForObjective": True,
                 "objectiveDescription": objective_description,
                 "routeOrder": route_order,
-                "totalCost": metrics["totalDistanceKm"],
+                "totalCost": metrics["objectiveCost"],
                 "estimatedDistanceKm": metrics["totalDistanceKm"],
                 "estimatedDurationMinutes": metrics["totalDurationMinutes"],
+                "totalStaticDurationMinutes": metrics["totalStaticDurationMinutes"],
+                "trafficDelayMinutes": metrics["trafficDelayMinutes"],
                 "edgeCount": metrics["edgeCount"],
                 "nodesExpanded": nodes_expanded,
                 "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -159,6 +181,9 @@ def run_ucs(
 
     return {
         "algorithm": "UCS",
+        "optimizationObjective": resolved_obj,
+        "dataSource": matrix.dataSource,
+        "trafficCalculatedAt": matrix.trafficCalculatedAt,
         "isInformed": False,
         "isOptimalForObjective": False,
         "objectiveDescription": objective_description,
@@ -166,6 +191,8 @@ def run_ucs(
         "totalCost": 0.0,
         "estimatedDistanceKm": 0.0,
         "estimatedDurationMinutes": 0.0,
+        "totalStaticDurationMinutes": 0.0,
+        "trafficDelayMinutes": 0.0,
         "edgeCount": 0,
         "nodesExpanded": nodes_expanded,
         "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),

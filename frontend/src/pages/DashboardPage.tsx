@@ -232,11 +232,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-5">
-          <p className="text-xs font-medium text-slate-500">Avg. Simulated Distance</p>
+          <p className="text-xs font-medium text-slate-500">Avg. Route Distance</p>
           <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-slate-900">
             {counts.avgDistanceKm !== null ? `${counts.avgDistanceKm} km` : '—'}
           </p>
-          <p className="mt-1 text-xs text-slate-500">Local Haversine estimate</p>
+          <p className="mt-1 text-xs text-slate-500">Saved route plan average</p>
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-5">
@@ -289,13 +289,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Simulated Distance</p>
+                  <p className="text-xs text-slate-500">Route Distance</p>
                   <p className="mt-0.5 font-mono font-semibold tabular-nums text-slate-900">
                     {summary.latestRoutePlan.total_distance_km} km
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500">Simulated Travel</p>
+                  <p className="text-xs text-slate-500">Est. Road Travel</p>
                   <p className="mt-0.5 font-mono font-semibold tabular-nums text-slate-900">
                     {summary.latestRoutePlan.total_duration_minutes} min
                   </p>
@@ -338,7 +338,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 Algorithm Average Distance Comparison
               </h3>
               <p className="text-xs text-slate-500">
-                Aggregated across stored runs (lower simulated km is better; BFS minimizes hops, not km)
+                Aggregated across stored runs (lower road km is better; BFS minimizes hops, not km)
               </p>
             </div>
             <button
@@ -358,7 +358,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <XAxis dataKey="algorithmName" tick={{ fontSize: 12, fill: '#475569' }} />
                   <YAxis tick={{ fontSize: 12, fill: '#475569' }} unit=" km" />
                   <Tooltip
-                    formatter={(val: unknown) => [`${val} km`, 'Avg Simulated Distance']}
+                    formatter={(val: unknown) => [`${val} km`, 'Avg Route Distance']}
                     contentStyle={{ fontSize: '12px', borderRadius: '6px', borderColor: '#CBD5E1' }}
                   />
                   <Bar dataKey="avgDistanceKm" fill="#2563EB" radius={[4, 4, 0, 0]} maxBarSize={52} />
@@ -396,7 +396,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <th className="px-6 py-3">Route Plan</th>
                   <th className="px-4 py-3">Algorithm</th>
                   <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3 text-right">Simulated Dist.</th>
+                  <th className="px-4 py-3 text-right">Route Dist.</th>
                   <th className="px-4 py-3 text-right">Nodes Expanded</th>
                   <th className="px-6 py-3 text-right">Exec Time</th>
                 </tr>

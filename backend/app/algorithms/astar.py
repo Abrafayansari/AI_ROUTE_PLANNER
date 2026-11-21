@@ -4,7 +4,7 @@ import heapq
 import math
 import time
 
-from app.utils.metrics import CostMatrixResult, evaluate_route_metrics
+from app.utils.metrics import CostMatrixResult, evaluate_route_metrics, get_objective_weights
 
 DEFAULT_MAX_NODES_EXPANDED = 150_000
 MAX_EXACT_DISTRIBUTORS = 12
@@ -13,9 +13,16 @@ MAX_EXACT_DISTRIBUTORS = 12
 def _compute_mst_weight(
     unvisited_mask: int,
     num_distributors: int,
-    weights: list[list[float]],
+    sym_weights: list[list[float]],
     mst_cache: dict[int, float],
 ) -> float:
+    """
+    Compute Prim's MST over unvisited distributor nodes using symmetric edge lower bounds:
+    sym_weights[u][v] = min(w[u][v], w[v][u]).
+    This guarantees MST(sym_weights, U) <= sum of the (|U|-1) directed internal edges
+    of any Hamiltonian path through U, preserving strict admissibility on asymmetric
+    traffic-aware matrices.
+    """
     cached = mst_cache.get(unvisited_mask)
     if cached is not None:
         return cached
@@ -45,7 +52,7 @@ def _compute_mst_weight(
         u_node = nodes[u_idx]
         for v_idx in range(m):
             if not in_tree[v_idx]:
-                w = weights[u_node][nodes[v_idx]]
+                w = sym_weights[u_node][nodes[v_idx]]
                 if w < min_edge[v_idx]:
                     min_edge[v_idx] = w
 
@@ -60,6 +67,7 @@ def _compute_admissible_heuristic(
     num_distributors: int,
     return_to_office: bool,
     weights: list[list[float]],
+    sym_weights: list[list[float]],
     mst_cache: dict[int, float],
 ) -> float:
     unvisited_mask = full_mask ^ visited_mask
@@ -80,7 +88,7 @@ def _compute_admissible_heuristic(
                 if exit_cost < min_exit:
                     min_exit = exit_cost
 
-    mst = _compute_mst_weight(unvisited_mask, num_distributors, weights, mst_cache)
+    mst = _compute_mst_weight(unvisited_mask, num_distributors, sym_weights, mst_cache)
     return min_entry + mst + min_exit
 
 
@@ -88,21 +96,27 @@ def run_astar(
     matrix: CostMatrixResult,
     return_to_office: bool = True,
     max_nodes_expanded: int = DEFAULT_MAX_NODES_EXPANDED,
+    optimization_objective: str | None = None,
 ) -> dict:
     """
     Week 4: A* Search — INFORMED heuristic search.
-    Uses f(n) = g(n) + h(n) with admissible 1-tree/MST + min-entry + min-exit lower bound.
-    Optimal for non-negative edge weights and expands <= nodes compared to UCS.
+    Uses f(n) = g(n) + h(n) with admissible 1-tree/symmetric-MST + directed min-entry + min-exit
+    lower bound so optimality holds cleanly even under asymmetric live traffic durations.
     """
     start_t = time.perf_counter()
     num_distributors = len(matrix.nodes) - 1
+    weights, resolved_obj = get_objective_weights(matrix, optimization_objective)
+    unit_label = "travel time (min)" if resolved_obj == "FASTEST_TIME" else "road distance (km)"
     objective_description = (
-        "Informed search minimizing total simulated distance using f(n) = g(n) + h(n) with admissible MST + entry/exit lower-bound heuristic."
+        f"Informed search minimizing cumulative {unit_label} using f(n) = g(n) + h(n) with admissible symmetric-MST + entry/exit lower-bound heuristic."
     )
 
     if num_distributors <= 0:
         return {
             "algorithm": "A*",
+            "optimizationObjective": resolved_obj,
+            "dataSource": matrix.dataSource,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
             "isInformed": True,
             "isOptimalForObjective": True,
             "objectiveDescription": objective_description,
@@ -110,6 +124,8 @@ def run_astar(
             "totalCost": 0.0,
             "estimatedDistanceKm": 0.0,
             "estimatedDurationMinutes": 0.0,
+            "totalStaticDurationMinutes": 0.0,
+            "trafficDelayMinutes": 0.0,
             "edgeCount": 0,
             "nodesExpanded": 1,
             "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -119,6 +135,9 @@ def run_astar(
     if num_distributors > MAX_EXACT_DISTRIBUTORS:
         return {
             "algorithm": "A*",
+            "optimizationObjective": resolved_obj,
+            "dataSource": matrix.dataSource,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
             "isInformed": True,
             "isOptimalForObjective": False,
             "objectiveDescription": objective_description,
@@ -126,6 +145,8 @@ def run_astar(
             "totalCost": 0.0,
             "estimatedDistanceKm": 0.0,
             "estimatedDurationMinutes": 0.0,
+            "totalStaticDurationMinutes": 0.0,
+            "trafficDelayMinutes": 0.0,
             "edgeCount": 0,
             "nodesExpanded": 0,
             "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -133,8 +154,13 @@ def run_astar(
             "warning": f"Exact A* capped at {MAX_EXACT_DISTRIBUTORS} distributors due to exponential TSP state space (n * 2^n). Use Genetic Algorithm for larger instances.",
         }
 
+    n_nodes = len(weights)
+    sym_weights = [
+        [min(weights[i][j], weights[j][i]) for j in range(n_nodes)]
+        for i in range(n_nodes)
+    ]
+
     full_mask = (1 << num_distributors) - 1
-    weights = matrix.distanceKm
     mst_cache: dict[int, float] = {}
 
     def encode_state(node: int, mask: int, returned: int) -> int:
@@ -148,7 +174,7 @@ def run_astar(
     parent_map[start_key] = (None, 0)
 
     h0 = _compute_admissible_heuristic(
-        0, 0, full_mask, num_distributors, return_to_office, weights, mst_cache
+        0, 0, full_mask, num_distributors, return_to_office, weights, sym_weights, mst_cache
     )
     tie = 0
     heap: list[tuple[float, int, int, int, int, int, float]] = [
@@ -165,6 +191,9 @@ def run_astar(
         if nodes_expanded >= max_nodes_expanded:
             return {
                 "algorithm": "A*",
+                "optimizationObjective": resolved_obj,
+                "dataSource": matrix.dataSource,
+                "trafficCalculatedAt": matrix.trafficCalculatedAt,
                 "isInformed": True,
                 "isOptimalForObjective": False,
                 "objectiveDescription": objective_description,
@@ -172,6 +201,8 @@ def run_astar(
                 "totalCost": 0.0,
                 "estimatedDistanceKm": 0.0,
                 "estimatedDurationMinutes": 0.0,
+                "totalStaticDurationMinutes": 0.0,
+                "trafficDelayMinutes": 0.0,
                 "edgeCount": 0,
                 "nodesExpanded": nodes_expanded,
                 "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -194,16 +225,21 @@ def run_astar(
                 cursor = prev_key
             route_order.reverse()
 
-            metrics = evaluate_route_metrics(matrix, route_order)
+            metrics = evaluate_route_metrics(matrix, route_order, resolved_obj)
             return {
                 "algorithm": "A*",
+                "optimizationObjective": resolved_obj,
+                "dataSource": matrix.dataSource,
+                "trafficCalculatedAt": matrix.trafficCalculatedAt,
                 "isInformed": True,
                 "isOptimalForObjective": True,
                 "objectiveDescription": objective_description,
                 "routeOrder": route_order,
-                "totalCost": metrics["totalDistanceKm"],
+                "totalCost": metrics["objectiveCost"],
                 "estimatedDistanceKm": metrics["totalDistanceKm"],
                 "estimatedDurationMinutes": metrics["totalDurationMinutes"],
+                "totalStaticDurationMinutes": metrics["totalStaticDurationMinutes"],
+                "trafficDelayMinutes": metrics["trafficDelayMinutes"],
                 "edgeCount": metrics["edgeCount"],
                 "nodesExpanded": nodes_expanded,
                 "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -228,6 +264,7 @@ def run_astar(
                             num_distributors,
                             return_to_office,
                             weights,
+                            sym_weights,
                             mst_cache,
                         )
                         tie += 1
@@ -247,6 +284,9 @@ def run_astar(
 
     return {
         "algorithm": "A*",
+        "optimizationObjective": resolved_obj,
+        "dataSource": matrix.dataSource,
+        "trafficCalculatedAt": matrix.trafficCalculatedAt,
         "isInformed": True,
         "isOptimalForObjective": False,
         "objectiveDescription": objective_description,
@@ -254,6 +294,8 @@ def run_astar(
         "totalCost": 0.0,
         "estimatedDistanceKm": 0.0,
         "estimatedDurationMinutes": 0.0,
+        "totalStaticDurationMinutes": 0.0,
+        "trafficDelayMinutes": 0.0,
         "edgeCount": 0,
         "nodesExpanded": nodes_expanded,
         "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),

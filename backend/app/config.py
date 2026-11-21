@@ -12,8 +12,16 @@ _DB_URL_SECRET_RE = re.compile(r"postgres(?:ql)?(?:\+\w+)?://[^\s'\"]+", re.IGNO
 
 
 def redact_secrets(text: str) -> str:
-    """Strip any PostgreSQL connection strings from logs or error messages."""
-    return _DB_URL_SECRET_RE.sub("[REDACTED_DATABASE_URL]", str(text or ""))
+    """Strip PostgreSQL URLs and API keys from logs or error messages."""
+    cleaned = _DB_URL_SECRET_RE.sub("[REDACTED_DATABASE_URL]", str(text or ""))
+    for env_name, placeholder in (
+        ("GOOGLE_MAPS_API_KEY", "[REDACTED_GOOGLE_MAPS_API_KEY]"),
+        ("OPENROUTESERVICE_API_KEY", "[REDACTED_OPENROUTESERVICE_API_KEY]"),
+    ):
+        secret_val = os.getenv(env_name, "").strip()
+        if secret_val and secret_val in cleaned:
+            cleaned = cleaned.replace(secret_val, placeholder)
+    return cleaned
 
 
 def is_postgresql_uri(uri: str | None) -> bool:
@@ -73,6 +81,13 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
     SQLALCHEMY_ENGINE_OPTIONS: dict = build_engine_options(
         SQLALCHEMY_DATABASE_URI, DATABASE_CONFIGURED
+    )
+    GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+    OSRM_BASE_URL: str = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org").strip().rstrip("/")
+    OSRM_PROFILE: str = os.getenv("OSRM_PROFILE", "driving").strip() or "driving"
+    OPENROUTESERVICE_API_KEY: str = os.getenv("OPENROUTESERVICE_API_KEY", "").strip()
+    OPENROUTESERVICE_BASE_URL: str = (
+        os.getenv("OPENROUTESERVICE_BASE_URL", "https://api.openrouteservice.org").strip().rstrip("/")
     )
     CORS_ORIGINS: list[str] = [
         origin.strip()

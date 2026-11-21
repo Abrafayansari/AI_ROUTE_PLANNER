@@ -37,6 +37,14 @@ class ScheduleEntry(db.Model):
     visit_duration_minutes = db.Column(db.Integer, nullable=False)
     priority = db.Column(db.SmallInteger, nullable=False, default=3)
     cluster_number = db.Column(db.Integer, nullable=True)
+    officer_id = db.Column(
+        PortableUUID,
+        db.ForeignKey("field_officers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    travel_from_previous_minutes = db.Column(db.Integer, nullable=True)
+    distance_from_previous_km = db.Column(db.Float, nullable=True)
+    data_source = db.Column(db.String(40), nullable=True, default="simulated_fallback")
     is_feasible = db.Column(db.Boolean, nullable=False, default=True)
     constraint_notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(
@@ -58,6 +66,18 @@ class ScheduleEntry(db.Model):
             "visit_duration_minutes": int(self.visit_duration_minutes),
             "priority": int(self.priority),
             "cluster_number": self.cluster_number,
+            "officer_id": str(self.officer_id) if self.officer_id else None,
+            "travel_from_previous_minutes": (
+                int(self.travel_from_previous_minutes)
+                if self.travel_from_previous_minutes is not None
+                else None
+            ),
+            "distance_from_previous_km": (
+                float(self.distance_from_previous_km)
+                if self.distance_from_previous_km is not None
+                else None
+            ),
+            "data_source": self.data_source or "simulated_fallback",
             "is_feasible": bool(self.is_feasible),
             "constraint_notes": self.constraint_notes or "",
             "created_at": _iso(self.created_at),

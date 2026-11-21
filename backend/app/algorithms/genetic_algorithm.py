@@ -4,7 +4,7 @@ import math
 import time
 import numpy as np
 
-from app.utils.metrics import CostMatrixResult, evaluate_route_metrics
+from app.utils.metrics import CostMatrixResult, evaluate_route_metrics, get_objective_weights
 
 
 def _tour_cost(chromosome: list[int], weights: list[list[float]], return_to_office: bool) -> float:
@@ -92,11 +92,12 @@ def run_genetic_algorithm(
     tournament_size: int = 4,
     stagnation_limit: int = 45,
     seed: int | None = None,
+    optimization_objective: str | None = None,
 ) -> dict:
     """
     Week 7: Evolutionary Search — Genetic Algorithm for multi-stop visit permutation.
     Fixed office start (0) and optional fixed office return (0).
-    Heuristic search: scales beyond exact search cap without guaranteeing global optimality.
+    Minimizes total tour duration in FASTEST_TIME mode or total road distance in SHORTEST_DISTANCE mode.
     """
     start_t = time.perf_counter()
     num_distributors = len(matrix.nodes) - 1
@@ -104,13 +105,19 @@ def run_genetic_algorithm(
     elite_count = min(elite_count, population_size)
     tournament_size = min(tournament_size, population_size)
 
+    weights, resolved_obj = get_objective_weights(matrix, optimization_objective)
+    cost_unit = "min" if resolved_obj == "FASTEST_TIME" else "km"
+    unit_label = "travel time (min)" if resolved_obj == "FASTEST_TIME" else "road distance (km)"
     objective_description = (
-        "Evolutionary heuristic search (OX1 crossover, inversion/swap mutation, elitism) minimizing simulated tour distance; does not guarantee global optimality."
+        f"Evolutionary heuristic search (OX1 crossover, inversion/swap mutation, elitism) minimizing total {unit_label}; scales beyond 12 stops without guaranteeing global optimality."
     )
 
     if num_distributors <= 0:
         return {
             "algorithm": "GENETIC_ALGORITHM",
+            "optimizationObjective": resolved_obj,
+            "dataSource": matrix.dataSource,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
             "isInformed": False,
             "isHeuristic": True,
             "isOptimalForObjective": False,
@@ -119,10 +126,12 @@ def run_genetic_algorithm(
             "totalCost": 0.0,
             "estimatedDistanceKm": 0.0,
             "estimatedDurationMinutes": 0.0,
+            "totalStaticDurationMinutes": 0.0,
+            "trafficDelayMinutes": 0.0,
             "edgeCount": 0,
             "nodesExpanded": 1,
             "generationsRun": 0,
-            "convergenceHistory": [{"generation": 0, "bestCost": 0.0}],
+            "convergenceHistory": [{"generation": 0, "bestCost": 0.0, "unit": cost_unit}],
             "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
             "completed": True,
             "parameters": {
@@ -132,11 +141,11 @@ def run_genetic_algorithm(
                 "mutationRate": mutation_rate,
                 "eliteCount": elite_count,
                 "seed": actual_seed,
+                "optimizationObjective": resolved_obj,
             },
         }
 
     rng = np.random.default_rng(actual_seed + 997)
-    weights = matrix.distanceKm
     base_perm = list(range(1, num_distributors + 1))
 
     def evaluate(chrom: list[int]) -> tuple[float, float, list[int]]:
@@ -171,7 +180,9 @@ def run_genetic_algorithm(
     best_ever = population[0]
     stagnation = 0
     generations_run = 0
-    convergence_history = [{"generation": 0, "bestCost": round(best_ever[0], 3)}]
+    convergence_history = [
+        {"generation": 0, "bestCost": round(best_ever[0], 3), "unit": cost_unit}
+    ]
 
     def select_tournament(pop: list[tuple[float, float, list[int]]]) -> tuple[float, float, list[int]]:
         idxs = rng.integers(0, len(pop), size=tournament_size)
@@ -210,7 +221,7 @@ def run_genetic_algorithm(
 
         if gen % 10 == 0 or gen == generations or stagnation >= stagnation_limit:
             convergence_history.append(
-                {"generation": gen, "bestCost": round(best_ever[0], 3)}
+                {"generation": gen, "bestCost": round(best_ever[0], 3), "unit": cost_unit}
             )
 
         if stagnation >= stagnation_limit:
@@ -222,18 +233,23 @@ def run_genetic_algorithm(
     route_order = (
         [0, *best_ever[2], 0] if return_to_office else [0, *best_ever[2]]
     )
-    metrics = evaluate_route_metrics(matrix, route_order)
+    metrics = evaluate_route_metrics(matrix, route_order, resolved_obj)
 
     return {
         "algorithm": "GENETIC_ALGORITHM",
+        "optimizationObjective": resolved_obj,
+        "dataSource": matrix.dataSource,
+        "trafficCalculatedAt": matrix.trafficCalculatedAt,
         "isInformed": False,
         "isHeuristic": True,
         "isOptimalForObjective": False,
         "objectiveDescription": objective_description,
         "routeOrder": route_order,
-        "totalCost": metrics["totalDistanceKm"],
+        "totalCost": metrics["objectiveCost"],
         "estimatedDistanceKm": metrics["totalDistanceKm"],
         "estimatedDurationMinutes": metrics["totalDurationMinutes"],
+        "totalStaticDurationMinutes": metrics["totalStaticDurationMinutes"],
+        "trafficDelayMinutes": metrics["trafficDelayMinutes"],
         "edgeCount": metrics["edgeCount"],
         "nodesExpanded": evaluations,
         "generationsRun": generations_run,
@@ -247,5 +263,6 @@ def run_genetic_algorithm(
             "mutationRate": mutation_rate,
             "eliteCount": elite_count,
             "seed": actual_seed,
+            "optimizationObjective": resolved_obj,
         },
     }

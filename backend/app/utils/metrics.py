@@ -1,12 +1,28 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass, field
 import math
 from typing import Literal, TypedDict
 import numpy as np
 
-TravelMode = Literal["simulated_vehicle", "simulated_walking", "simulated_van"]
+TravelMode = Literal[
+    "simulated_vehicle",
+    "simulated_walking",
+    "simulated_van",
+    "DRIVE",
+    "TWO_WHEELER",
+    "WALK",
+]
+OptimizationObjective = Literal["FASTEST_TIME", "SHORTEST_DISTANCE"]
+RoutingProviderType = Literal["google_maps", "osrm", "openrouteservice", "simulated_fallback"]
+DataSourceType = Literal[
+    "google_live_traffic",
+    "google_road_distance",
+    "osrm_osm",
+    "openrouteservice",
+    "simulated_fallback",
+]
 
 EARTH_RADIUS_KM = 6371.0
 MAX_CACHE_SIZE = 100
@@ -33,6 +49,23 @@ class CostMatrixResult:
     speedKmh: float
     cacheHit: bool
     matrixKey: str
+    staticDurationMinutes: list[list[float]] | None = None
+    optimizationObjective: OptimizationObjective = "FASTEST_TIME"
+    provider: RoutingProviderType = "simulated_fallback"
+    providerLabel: str = "Simulated Local Graph"
+    dataSource: DataSourceType = "simulated_fallback"
+    isLiveTraffic: bool = False
+    durationType: Literal["live_traffic", "estimated_road_duration", "simulated"] = "simulated"
+    durationLabel: str = "Simulated straight-line estimate"
+    trafficCalculatedAt: str | None = None
+    calculatedAt: str | None = None
+    fallbackReason: str | None = None
+    providerAttempts: list[dict] = field(default_factory=list)
+    roadDistanceAvailable: bool = False
+
+    def __post_init__(self) -> None:
+        if self.staticDurationMinutes is None:
+            self.staticDurationMinutes = [list(row) for row in self.durationMinutes]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -67,10 +100,12 @@ haversine_distance_km = haversine_km
 
 
 def get_simulated_speed_kmh(mode: str) -> float:
-    if mode == "simulated_walking":
+    if mode in ("simulated_walking", "WALK"):
         return 5.0
     if mode == "simulated_van":
         return 28.0
+    if mode == "TWO_WHEELER":
+        return 30.0
     return 35.0
 
 
@@ -86,6 +121,8 @@ def build_local_cost_matrix(
     seed: int = 42,
     distance_multiplier: float = 1.25,
     travel_mode: TravelMode = "simulated_vehicle",
+    optimization_objective: OptimizationObjective = "FASTEST_TIME",
+    fallback_reason: str | None = None,
 ) -> CostMatrixResult:
     clamped_mult = max(1.0, min(3.0, float(distance_multiplier)))
     speed_kmh = get_simulated_speed_kmh(travel_mode)
@@ -94,12 +131,15 @@ def build_local_cost_matrix(
         f"{n['id']}:{float(n['latitude']):.6f},{float(n['longitude']):.6f}"
         for n in nodes
     )
-    matrix_key = f"{seed}|{clamped_mult:.3f}|{travel_mode}|{coord_signature}"
+    matrix_key = f"{seed}|{clamped_mult:.3f}|{travel_mode}|{optimization_objective}|{coord_signature}"
 
     cached = _MATRIX_CACHE.get(matrix_key)
     if cached is not None:
         _MATRIX_CACHE.move_to_end(matrix_key)
-        return CostMatrixResult(cacheHit=True, **cached)
+        payload = dict(cached)
+        if fallback_reason is not None:
+            payload["fallbackReason"] = fallback_reason
+        return CostMatrixResult(cacheHit=True, **payload)
 
     n = len(nodes)
     straight_line = np.zeros((n, n), dtype=float)
@@ -135,11 +175,17 @@ def build_local_cost_matrix(
         "straightLineKm": straight_line.tolist(),
         "distanceKm": distance_km.tolist(),
         "durationMinutes": duration_min.tolist(),
+        "staticDurationMinutes": duration_min.tolist(),
         "seed": int(seed),
         "distanceMultiplier": clamped_mult,
         "travelMode": travel_mode,
         "speedKmh": speed_kmh,
         "matrixKey": matrix_key,
+        "optimizationObjective": optimization_objective,
+        "dataSource": "simulated_fallback",
+        "trafficCalculatedAt": None,
+        "fallbackReason": fallback_reason,
+        "roadDistanceAvailable": False,
     }
 
     if len(_MATRIX_CACHE) >= MAX_CACHE_SIZE:
@@ -149,17 +195,47 @@ def build_local_cost_matrix(
     return CostMatrixResult(cacheHit=False, **payload)
 
 
-def evaluate_route_metrics(matrix: CostMatrixResult, route_order: list[int]) -> dict:
+def resolve_objective(
+    matrix: CostMatrixResult, optimization_objective: str | None = None
+) -> OptimizationObjective:
+    obj = optimization_objective or matrix.optimizationObjective or "FASTEST_TIME"
+    return "SHORTEST_DISTANCE" if obj == "SHORTEST_DISTANCE" else "FASTEST_TIME"
+
+
+def get_objective_weights(
+    matrix: CostMatrixResult, optimization_objective: str | None = None
+) -> tuple[list[list[float]], OptimizationObjective]:
+    resolved = resolve_objective(matrix, optimization_objective)
+    if resolved == "SHORTEST_DISTANCE":
+        return matrix.distanceKm, resolved
+    return matrix.durationMinutes, resolved
+
+
+def evaluate_route_metrics(
+    matrix: CostMatrixResult,
+    route_order: list[int],
+    optimization_objective: str | None = None,
+) -> dict:
+    resolved_obj = resolve_objective(matrix, optimization_objective)
+    static_mat = matrix.staticDurationMinutes or matrix.durationMinutes
     dist = 0.0
     dur = 0.0
+    static_dur = 0.0
     for i in range(len(route_order) - 1):
         u = route_order[i]
         v = route_order[i + 1]
         dist += matrix.distanceKm[u][v]
         dur += matrix.durationMinutes[u][v]
+        static_dur += static_mat[u][v]
+    traffic_delay = max(0.0, dur - static_dur) if matrix.dataSource == "google_live_traffic" else 0.0
+    objective_cost = dist if resolved_obj == "SHORTEST_DISTANCE" else dur
     return {
         "totalDistanceKm": round(dist, 3),
         "totalDurationMinutes": round(dur, 2),
+        "totalStaticDurationMinutes": round(static_dur, 2),
+        "trafficDelayMinutes": round(traffic_delay, 2),
+        "objectiveCost": round(objective_cost, 3),
+        "optimizationObjective": resolved_obj,
         "edgeCount": max(0, len(route_order) - 1),
     }
 

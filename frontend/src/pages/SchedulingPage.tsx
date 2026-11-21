@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AlertTriangle, CalendarClock, Play, ShieldAlert, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
-import type { CspRunResult, Distributor, OfficeLocation } from '../types';
+import type { CspRunResult, Distributor, OfficeLocation, TravelMode } from '../types';
 
 interface SchedulingPageProps {
   onNotify: (kind: 'success' | 'error', text: string) => void;
@@ -29,9 +29,12 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
   const [lunchStartTime, setLunchStartTime] = useState('12:30');
   const [lunchDurationMinutes, setLunchDurationMinutes] = useState(60);
   const [maxVisitsPerDay, setMaxVisitsPerDay] = useState(8);
+  const [travelMode, setTravelMode] = useState<TravelMode>('DRIVE');
+  const [useRoadTravelTimes, setUseRoadTravelTimes] = useState(true);
 
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [result, setResult] = useState<CspRunResult | null>(null);
 
   useEffect(() => {
@@ -66,13 +69,21 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
               reason: 'Not included in the latest saved schedule run.',
             }));
 
+          const usesFixed = entries.every((e) => e.travel_from_previous_minutes == null);
+
           setResult({
             routePlanId: latestSchedRes.data.routePlanId,
             officeId: latestSchedRes.data.officeId,
             officeName: latestSchedRes.data.officeName,
             scheduleDate: schedDate,
+            provider: latestSchedRes.data.provider,
+            providerLabel: latestSchedRes.data.providerLabel,
+            dataSource: latestSchedRes.data.dataSource,
+            isLiveTraffic: latestSchedRes.data.isLiveTraffic,
+            durationType: latestSchedRes.data.durationType,
+            durationLabel: latestSchedRes.data.durationLabel,
             allDistributorsScheduled: unscheduledList.length === 0,
-            usesFixedTravelBuffer: true,
+            usesFixedTravelBuffer: usesFixed,
             scheduled: entries.map((e) => ({
               distributorId: e.distributor_id,
               distributorName: e.distributor_name,
@@ -83,6 +94,7 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
               endMinutes: toMins(e.end_time),
               durationMinutes: e.visit_duration_minutes,
               bufferMinutes: travelBufferMinutes,
+              travelMinutesFromPrevious: e.travel_from_previous_minutes ?? undefined,
               openingTime: e.opening_time,
               closingTime: e.closing_time,
               distanceKm: e.distanceKm,
@@ -119,6 +131,7 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
     }
 
     setRunning(true);
+    setScheduleError(null);
     try {
       const res = await api.runSchedule({
         distributorIds: selectedIds,
@@ -132,6 +145,8 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
         lunchStartTime,
         lunchDurationMinutes,
         maxVisitsPerDay,
+        travelMode,
+        useRoadTravelTimes,
       });
       setResult(res.data);
       onNotify(
@@ -139,7 +154,9 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
         `Scheduled ${res.data.scheduled.length} visit(s); ${res.data.unscheduled.length} unscheduled.`
       );
     } catch (err) {
-      onNotify('error', err instanceof Error ? err.message : 'CSP scheduler failed');
+      const msg = err instanceof Error ? err.message : 'CSP scheduler failed';
+      setScheduleError(msg);
+      onNotify('error', msg);
     } finally {
       setRunning(false);
     }
@@ -158,8 +175,14 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
     <div className="space-y-6">
       <div className="rounded-lg border border-slate-200 bg-white px-5 py-3.5 text-xs text-slate-600">
         <span className="font-semibold text-slate-900">Week 5 · Constraint Satisfaction Problem (CSP):</span>{' '}
-        Models each distributor visit as a variable with start-time domains filtered by officer working hours, distributor opening/closing hours, mandatory lunch interval, and non-overlapping fixed travel buffers. Note: this is a simplified fixed-buffer CSP schedule; it does not verify real-time road traffic feasibility.
+        Models each distributor visit as a variable with start-time domains filtered by officer working hours, distributor opening/closing hours, mandatory lunch interval, and non-overlapping origin-destination road travel times plus slack buffers (using Google Routes API if configured, falling back to OSRM / OpenStreetMap and OpenRouteService).
       </div>
+
+      {scheduleError && (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-5 py-3.5 text-xs text-red-900">
+          <strong className="font-semibold">Real-Road Scheduling Error:</strong> {scheduleError}
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-12">
         <form
@@ -278,17 +301,40 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
             )}
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-700">Max Visits Per Day</label>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={maxVisitsPerDay}
-              onChange={(e) => setMaxVisitsPerDay(Number(e.target.value))}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-1.5 font-mono text-sm"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700">Max Visits Per Day</label>
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={maxVisitsPerDay}
+                onChange={(e) => setMaxVisitsPerDay(Number(e.target.value))}
+                className="mt-1 w-full rounded-md border border-slate-200 px-3 py-1.5 font-mono text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700">Travel Mode</label>
+              <select
+                value={travelMode}
+                onChange={(e) => setTravelMode(e.target.value as TravelMode)}
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+              >
+                <option value="DRIVE">Car (DRIVE)</option>
+                <option value="TWO_WHEELER">Motorcycle</option>
+                <option value="WALK">Walking</option>
+              </select>
+            </div>
           </div>
+
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={useRoadTravelTimes}
+              onChange={(e) => setUseRoadTravelTimes(e.target.checked)}
+            />
+            Enforce O–D road travel times between stops
+          </label>
 
           <div>
             <div className="flex items-center justify-between">
@@ -368,8 +414,20 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
                       {result.backtracks} backtrack(s) · {result.executionTimeMs} ms
                     </p>
                   </div>
-                  <span className="text-xs font-medium text-amber-700">
-                    Uses fixed {travelBufferMinutes}m buffer (not road traffic)
+                  <span
+                    className={`text-xs font-medium ${
+                      result.usesFixedTravelBuffer
+                        ? 'text-amber-700'
+                        : result.isLiveTraffic || result.dataSource === 'google_live_traffic'
+                          ? 'text-emerald-700'
+                          : 'text-blue-700'
+                    }`}
+                  >
+                    {result.usesFixedTravelBuffer
+                      ? `Fixed ${travelBufferMinutes}m buffer (O–D travel disabled)`
+                      : `O–D travel (${result.providerLabel || (result.dataSource || 'osrm_osm').replace(/_/g, ' ')} · ${
+                          result.isLiveTraffic ? 'live traffic' : 'estimated road duration'
+                        }) + ${travelBufferMinutes}m slack`}
                   </span>
                 </div>
 
@@ -456,7 +514,7 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
                         <th className="px-4 py-2.5">Slot Window</th>
                         <th className="px-4 py-2.5">Distributor</th>
                         <th className="px-4 py-2.5 text-right">Duration</th>
-                        <th className="px-4 py-2.5 text-right">Buffer</th>
+                        <th className="px-4 py-2.5 text-right">Travel / Buffer</th>
                         <th className="px-4 py-2.5 text-right">Opening Window</th>
                         <th className="px-4 py-2.5 text-right">Priority</th>
                         <th className="px-4 py-2.5 text-center">Delay Risk (BN)</th>
@@ -475,7 +533,9 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
                             {s.durationMinutes} min
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-500">
-                            +{s.bufferMinutes} min
+                            {s.travelMinutesFromPrevious !== undefined
+                              ? `${s.travelMinutesFromPrevious}m travel`
+                              : `+${s.bufferMinutes}m buf`}
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
                             {s.openingTime}–{s.closingTime}

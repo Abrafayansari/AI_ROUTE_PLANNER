@@ -310,7 +310,7 @@ export const AiConceptsPage: React.FC = () => {
           Course Topics & Probabilistic Inference Architecture
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Smart Route Planner implements classical artificial intelligence techniques across seven modular syllabus domains. Every algorithm runs natively on the Python backend using NumPy and Pandas. No third-party routing or geocoding APIs are used; all graph metrics and delay probabilities are computed locally.
+          Smart Route Planner implements classical and probabilistic AI techniques across seven modular syllabus domains on the Python backend using NumPy and Pandas. Real-road distances, route geometries, and travel durations come from a prioritized provider chain—Google Routes API (optional, when configured), OSRM / OpenStreetMap (free default fallback), and OpenRouteService (free-tier fallback, when configured)—while our Python algorithms remain solely responsible for route optimization (BFS, UCS, A*, GA), CSP scheduling, K-Means clustering, and Bayesian delay prediction across both Fastest Time and Shortest Distance objectives.
         </p>
         <div className="mt-3 inline-flex items-center gap-2 rounded-md bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-800">
           Syllabus Modules Implemented: Weeks 2, 3, 4, 5, 7, 12, and 14 (Bayesian Networks).

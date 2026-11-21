@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 
 from app.utils.metrics import minutes_to_time, time_to_minutes
@@ -17,7 +18,7 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
       1. Officer working hours
       2. Distributor opening/closing windows
       3. Mandatory lunch break interval (if enabled)
-      4. Non-overlapping visits + fixed travel buffer
+      4. Non-overlapping visits + directed road travel times (or fixed fallback buffer)
       5. Maximum visits per day
     Never violates hard constraints for priority; reports exact failure reasons for unscheduled stops.
     """
@@ -32,8 +33,20 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
     lunch_end = lunch_start + lunch_duration
     max_visits = max(1, int(config.get("maxVisitsPerDay", 10)))
 
+    travel_matrix: dict[str, dict[str, float]] | None = config.get("travelTimesMatrix")
+    office_travel_map: dict[str, float] = config.get("officeToDistributorMinutes") or {}
+    distance_matrix: dict[str, dict[str, float]] | None = config.get("distanceKmMatrix")
+    office_distance_map: dict[str, float] = config.get("officeToDistributorKm") or {}
+    uses_fixed_buffer = not bool(travel_matrix)
+    data_source = str(config.get("dataSource") or "simulated_fallback")
+
     if work_end <= work_start:
         raise ValueError("Work end time must be strictly after work start time.")
+
+    def _travel_between(from_id: str, to_id: str) -> int:
+        if travel_matrix and from_id in travel_matrix and to_id in travel_matrix[from_id]:
+            return max(buffer_min if config.get("enforceMinimumBuffer", False) else 0, int(math.ceil(float(travel_matrix[from_id][to_id]))))
+        return buffer_min
 
     variables: list[tuple[dict, list[int]]] = []
     unary_rejected: dict[str, dict] = {}
@@ -108,12 +121,24 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
     max_steps = 25_000
     steps = 0
 
+    def is_pair_compatible(
+        id_a: str, start_a: int, end_a: int, id_b: str, start_b: int, end_b: int
+    ) -> bool:
+        if _intervals_overlap(start_a, end_a, start_b, end_b):
+            return False
+        if end_a <= start_b:
+            return end_a + _travel_between(id_a, id_b) <= start_b
+        return end_b + _travel_between(id_b, id_a) <= start_a
+
     def is_conflict_free(
-        placed: list[tuple[dict, int, int]], start_min: int, dur_min: int
+        placed: list[tuple[dict, int, int]],
+        cand_id: str,
+        start_min: int,
+        dur_min: int,
     ) -> bool:
         end_min = start_min + dur_min
-        for _, p_start, p_end in placed:
-            if _intervals_overlap(start_min, end_min + buffer_min, p_start, p_end + buffer_min):
+        for p_dist, p_start, p_end in placed:
+            if not is_pair_compatible(p_dist["id"], p_start, p_end, cand_id, start_min, end_min):
                 return False
         return True
 
@@ -146,30 +171,33 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
             return
 
         current_dist, _ = variables[var_idx]
+        cur_id = current_dist["id"]
         cur_dur = int(current_dist["visitDurationMinutes"])
         cur_prio = int(current_dist["priority"])
         domain = remaining_domains[var_idx]
 
         for slot in domain:
-            if not is_conflict_free(placed, slot, cur_dur):
+            if not is_conflict_free(placed, cur_id, slot, cur_dur):
                 continue
 
             next_end = slot + cur_dur
             next_placed = placed + [(current_dist, slot, next_end)]
 
-            # Forward checking
+            # Forward checking using directed O-D travel times (or fixed buffer)
             next_domains: list[list[int]] = []
             for idx, dom in enumerate(remaining_domains):
                 if idx <= var_idx:
                     next_domains.append(dom)
                 else:
-                    future_dur = int(variables[idx][0]["visitDurationMinutes"])
+                    future_dist = variables[idx][0]
+                    future_id = future_dist["id"]
+                    future_dur = int(future_dist["visitDurationMinutes"])
                     next_domains.append(
                         [
                             t
                             for t in dom
-                            if not _intervals_overlap(
-                                t, t + future_dur + buffer_min, slot, next_end + buffer_min
+                            if is_pair_compatible(
+                                cur_id, slot, next_end, future_id, t, t + future_dur
                             )
                         ]
                     )
@@ -187,22 +215,46 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
     best_assignment.sort(key=lambda item: item[1])
     scheduled_ids = {item[0]["id"] for item in best_assignment}
 
-    scheduled = [
-        {
-            "distributorId": dist["id"],
-            "distributorName": dist["name"],
-            "priority": int(dist["priority"]),
-            "startTime": minutes_to_time(start_min),
-            "endTime": minutes_to_time(end_min),
-            "startMinutes": start_min,
-            "endMinutes": end_min,
-            "durationMinutes": int(dist["visitDurationMinutes"]),
-            "bufferMinutes": buffer_min,
-            "openingTime": dist["openingTime"],
-            "closingTime": dist["closingTime"],
-        }
-        for dist, start_min, end_min in best_assignment
-    ]
+    scheduled: list[dict] = []
+    for idx, (dist, start_min, end_min) in enumerate(best_assignment):
+        did = dist["id"]
+        if idx == 0:
+            travel_prev = (
+                int(math.ceil(float(office_travel_map[did])))
+                if did in office_travel_map
+                else buffer_min
+            )
+            dist_prev = (
+                round(float(office_distance_map[did]), 2)
+                if did in office_distance_map
+                else None
+            )
+        else:
+            prev_did = best_assignment[idx - 1][0]["id"]
+            travel_prev = _travel_between(prev_did, did)
+            dist_prev = (
+                round(float(distance_matrix[prev_did][did]), 2)
+                if (distance_matrix and prev_did in distance_matrix and did in distance_matrix[prev_did])
+                else None
+            )
+
+        scheduled.append(
+            {
+                "distributorId": did,
+                "distributorName": dist["name"],
+                "priority": int(dist["priority"]),
+                "startTime": minutes_to_time(start_min),
+                "endTime": minutes_to_time(end_min),
+                "startMinutes": start_min,
+                "endMinutes": end_min,
+                "durationMinutes": int(dist["visitDurationMinutes"]),
+                "bufferMinutes": travel_prev,
+                "travelMinutesFromPrevious": travel_prev,
+                "distanceKm": dist_prev,
+                "openingTime": dist["openingTime"],
+                "closingTime": dist["closingTime"],
+            }
+        )
 
     unscheduled: list[dict] = []
     for dist in distributors:
@@ -224,6 +276,11 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
                 }
             )
         else:
+            travel_desc = (
+                "directed road travel times"
+                if not uses_fixed_buffer
+                else f"{buffer_min}m travel buffers"
+            )
             unscheduled.append(
                 {
                     "distributorId": dist["id"],
@@ -232,7 +289,7 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
                     "visitDurationMinutes": int(dist["visitDurationMinutes"]),
                     "openingTime": dist["openingTime"],
                     "closingTime": dist["closingTime"],
-                    "reason": f"No non-overlapping slot remains within working hours ({config['workStartTime']}–{config['workEndTime']}) after {buffer_min}m travel buffers.",
+                    "reason": f"No non-overlapping slot remains within working hours ({config['workStartTime']}–{config['workEndTime']}) after accounting for {travel_desc}.",
                 }
             )
 
@@ -241,16 +298,22 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
         if lunch_enabled
         else ""
     )
+    travel_mode_note = (
+        f"Road travel times ({data_source})"
+        if not uses_fixed_buffer
+        else f"Fixed {buffer_min}m travel buffer"
+    )
 
     return {
         "allDistributorsScheduled": len(unscheduled) == 0,
-        "usesFixedTravelBuffer": True,
+        "usesFixedTravelBuffer": uses_fixed_buffer,
+        "dataSource": data_source,
         "scheduled": scheduled,
         "unscheduled": unscheduled,
         "backtracks": backtracks,
         "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
         "constraintsSummary": (
             f"CSP Backtracking + Forward Checking · Working hours {config['workStartTime']}–{config['workEndTime']} "
-            f"· Fixed {buffer_min}m travel buffer{lunch_note} · Max {max_visits} visits/day."
+            f"· {travel_mode_note}{lunch_note} · Max {max_visits} visits/day."
         ),
     }

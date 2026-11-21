@@ -2,11 +2,19 @@ import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { SchematicCentroid, SchematicPoint } from './SchematicMap';
+import type { DataSourceType, RoutingProvider } from '../types';
+import { decodeEncodedPolyline } from '../utils/polyline';
 
 interface LeafletRouteMapProps {
   points: SchematicPoint[];
   centroids?: SchematicCentroid[];
   routeOrderIds?: string[];
+  encodedPolyline?: string | null;
+  provider?: RoutingProvider;
+  providerLabel?: string;
+  isLiveTraffic?: boolean;
+  durationLabel?: string;
+  dataSource?: DataSourceType;
   height?: number;
   title?: string;
 }
@@ -35,6 +43,11 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
   points,
   centroids = [],
   routeOrderIds = [],
+  encodedPolyline = null,
+  providerLabel,
+  isLiveTraffic = false,
+  durationLabel,
+  dataSource = 'osrm_osm',
   height = 420,
   title = 'Interactive Leaflet Route Map',
 }) => {
@@ -82,7 +95,19 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
     const pointMap = new Map(validPoints.map((p) => [p.id, p]));
     const bounds = L.latLngBounds([]);
 
-    if (routeOrderIds.length > 1) {
+    const decodedRoad = encodedPolyline ? decodeEncodedPolyline(encodedPolyline) : [];
+    if (decodedRoad.length >= 2) {
+      const roadLatLngs: L.LatLngExpression[] = decodedRoad.map((pt) => {
+        bounds.extend([pt.lat, pt.lng]);
+        return [pt.lat, pt.lng];
+      });
+      L.polyline(roadLatLngs, {
+        color: '#2563EB',
+        weight: 4,
+        opacity: 0.9,
+        lineJoin: 'round',
+      }).addTo(map);
+    } else if (routeOrderIds.length > 1) {
       const latlngs: L.LatLngExpression[] = [];
       routeOrderIds.forEach((id) => {
         const pt = pointMap.get(id);
@@ -94,8 +119,9 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
       if (latlngs.length > 1) {
         L.polyline(latlngs, {
           color: '#2563EB',
-          weight: 4,
+          weight: 3.5,
           opacity: 0.85,
+          dashArray: '6, 6',
           lineJoin: 'round',
         }).addTo(map);
       }
@@ -177,14 +203,14 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
         mapRef.current = null;
       }
     };
-  }, [points, centroids, routeOrderIds]);
+  }, [points, centroids, routeOrderIds, encodedPolyline]);
 
   if (validPoints.length === 0) {
     return (
       <div className="rounded-lg border border-slate-200 bg-white p-6">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-          <span className="text-xs text-slate-500">OpenStreetMap Leaflet · Simulated routes</span>
+          <span className="text-xs text-slate-500">OpenStreetMap Leaflet</span>
         </div>
         <div className="flex h-64 items-center justify-center text-sm text-slate-500">
           Add an office or distributor coordinates to render the interactive Leaflet map.
@@ -199,7 +225,16 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
         <div>
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
           <p className="text-xs text-slate-500">
-            Straight-line simulated legs rendered on OpenStreetMap Leaflet basemap · Click pins for stop details
+            {encodedPolyline
+              ? `Real road geometry (${providerLabel || dataSource.replace(/_/g, ' ')}) · ${
+                  durationLabel ||
+                  (isLiveTraffic
+                    ? 'Live traffic durations'
+                    : 'Estimated normal road durations (no live traffic)')
+                }`
+              : routeOrderIds.length > 1
+                ? 'Route stop order plotted on OpenStreetMap Leaflet · Click pins for stop details'
+                : 'OpenStreetMap Leaflet · Click Optimize to fetch road-following polyline'}
           </p>
         </div>
         <div className="flex items-center gap-4 text-xs text-slate-600">

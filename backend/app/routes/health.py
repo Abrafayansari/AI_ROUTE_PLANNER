@@ -8,6 +8,7 @@ from app.services import (
     apply_migrations_idempotently,
     check_database_health,
     clear_demo_data,
+    get_maps_status,
     load_demo_data,
 )
 from app.utils.responses import fail, ok
@@ -18,6 +19,7 @@ health_bp = Blueprint("health", __name__)
 @health_bp.get("/health")
 def get_health():
     health = check_database_health()
+    maps_status = get_maps_status()
     if not health["connected"]:
         code = (
             "DATABASE_CONNECTION_FAILED"
@@ -27,12 +29,12 @@ def get_health():
         return (
             {
                 "success": False,
-                "data": {"app": "ok", "database": health},
+                "data": {"app": "ok", "database": health, "googleMaps": maps_status},
                 "error": {"code": code, "message": health["message"]},
             },
             503,
         )
-    return ok({"app": "ok", "database": health}, health["message"])
+    return ok({"app": "ok", "database": health, "googleMaps": maps_status}, health["message"])
 
 
 @health_bp.post("/db/init")

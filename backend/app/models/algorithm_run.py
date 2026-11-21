@@ -27,6 +27,10 @@ class AlgorithmRun(db.Model):
         nullable=False,
     )
     algorithm_name = db.Column(db.String(50), nullable=False)
+    optimization_objective = db.Column(db.String(30), nullable=False, default="FASTEST_TIME")
+    data_source = db.Column(db.String(40), nullable=False, default="simulated_fallback")
+    traffic_calculated_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    encoded_polyline = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="completed")
     route_order = db.Column(PortableUUIDList, nullable=False, default=list)
     route_names = db.Column(PortableJSON, nullable=False, default=list)
@@ -49,6 +53,10 @@ class AlgorithmRun(db.Model):
             "id": str(self.id),
             "route_plan_id": str(self.route_plan_id),
             "algorithm_name": self.algorithm_name,
+            "optimization_objective": self.optimization_objective or "FASTEST_TIME",
+            "data_source": self.data_source or "simulated_fallback",
+            "traffic_calculated_at": _iso(self.traffic_calculated_at),
+            "encoded_polyline": self.encoded_polyline,
             "status": self.status,
             "route_order": [str(x) for x in (self.route_order or [])],
             "route_names": self.route_names or [],

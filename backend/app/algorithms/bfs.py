@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 import time
 
-from app.utils.metrics import CostMatrixResult, evaluate_route_metrics
+from app.utils.metrics import CostMatrixResult, evaluate_route_metrics, resolve_objective
 
 DEFAULT_MAX_NODES_EXPANDED = 150_000
 MAX_EXACT_DISTRIBUTORS = 12
@@ -13,25 +13,35 @@ def run_bfs(
     matrix: CostMatrixResult,
     return_to_office: bool = True,
     max_nodes_expanded: int = DEFAULT_MAX_NODES_EXPANDED,
+    optimization_objective: str | None = None,
 ) -> dict:
     """
     Week 3: Uninformed Search — Breadth-First Search (BFS).
     Explores states level-by-level in FIFO order and minimizes edge/hop count,
-    NOT weighted simulated travel distance.
+    NOT weighted travel time or road distance.
     """
     start_t = time.perf_counter()
     num_distributors = len(matrix.nodes) - 1
+    resolved_obj = resolve_objective(matrix, optimization_objective)
+    objective_description = (
+        "Uninformed search minimizing edge/hop count only (does NOT minimize travel time or road distance)."
+    )
 
     if num_distributors <= 0:
         return {
             "algorithm": "BFS",
+            "optimizationObjective": resolved_obj,
+            "dataSource": matrix.dataSource,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
             "isInformed": False,
-            "isOptimalForObjective": True,
-            "objectiveDescription": "Uninformed search minimizing edge/hop count (ignores travel distance weights).",
+            "isOptimalForObjective": False,
+            "objectiveDescription": objective_description,
             "routeOrder": [0],
             "totalCost": 0.0,
             "estimatedDistanceKm": 0.0,
             "estimatedDurationMinutes": 0.0,
+            "totalStaticDurationMinutes": 0.0,
+            "trafficDelayMinutes": 0.0,
             "edgeCount": 0,
             "nodesExpanded": 1,
             "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -41,13 +51,18 @@ def run_bfs(
     if num_distributors > MAX_EXACT_DISTRIBUTORS:
         return {
             "algorithm": "BFS",
+            "optimizationObjective": resolved_obj,
+            "dataSource": matrix.dataSource,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
             "isInformed": False,
             "isOptimalForObjective": False,
-            "objectiveDescription": "Uninformed search minimizing edge/hop count (ignores travel distance weights).",
+            "objectiveDescription": objective_description,
             "routeOrder": [],
             "totalCost": 0.0,
             "estimatedDistanceKm": 0.0,
             "estimatedDurationMinutes": 0.0,
+            "totalStaticDurationMinutes": 0.0,
+            "trafficDelayMinutes": 0.0,
             "edgeCount": 0,
             "nodesExpanded": 0,
             "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -68,13 +83,18 @@ def run_bfs(
         if nodes_expanded >= max_nodes_expanded:
             return {
                 "algorithm": "BFS",
+                "optimizationObjective": resolved_obj,
+                "dataSource": matrix.dataSource,
+                "trafficCalculatedAt": matrix.trafficCalculatedAt,
                 "isInformed": False,
                 "isOptimalForObjective": False,
-                "objectiveDescription": "Uninformed search minimizing edge/hop count (ignores travel distance weights).",
+                "objectiveDescription": objective_description,
                 "routeOrder": [],
                 "totalCost": 0.0,
                 "estimatedDistanceKm": 0.0,
                 "estimatedDurationMinutes": 0.0,
+                "totalStaticDurationMinutes": 0.0,
+                "trafficDelayMinutes": 0.0,
                 "edgeCount": 0,
                 "nodesExpanded": nodes_expanded,
                 "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -87,16 +107,21 @@ def run_bfs(
 
         is_goal = mask == full_mask and (not return_to_office or returned == 1)
         if is_goal:
-            metrics = evaluate_route_metrics(matrix, path)
+            metrics = evaluate_route_metrics(matrix, path, resolved_obj)
             return {
                 "algorithm": "BFS",
+                "optimizationObjective": resolved_obj,
+                "dataSource": matrix.dataSource,
+                "trafficCalculatedAt": matrix.trafficCalculatedAt,
                 "isInformed": False,
-                "isOptimalForObjective": True,
-                "objectiveDescription": "Uninformed search minimizing edge/hop count (does NOT minimize simulated travel distance).",
+                "isOptimalForObjective": False,
+                "objectiveDescription": objective_description,
                 "routeOrder": path,
-                "totalCost": metrics["totalDistanceKm"],
+                "totalCost": metrics["objectiveCost"],
                 "estimatedDistanceKm": metrics["totalDistanceKm"],
                 "estimatedDurationMinutes": metrics["totalDurationMinutes"],
+                "totalStaticDurationMinutes": metrics["totalStaticDurationMinutes"],
+                "trafficDelayMinutes": metrics["trafficDelayMinutes"],
                 "edgeCount": metrics["edgeCount"],
                 "nodesExpanded": nodes_expanded,
                 "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),
@@ -120,13 +145,18 @@ def run_bfs(
 
     return {
         "algorithm": "BFS",
+        "optimizationObjective": resolved_obj,
+        "dataSource": matrix.dataSource,
+        "trafficCalculatedAt": matrix.trafficCalculatedAt,
         "isInformed": False,
         "isOptimalForObjective": False,
-        "objectiveDescription": "Uninformed search minimizing edge/hop count.",
+        "objectiveDescription": objective_description,
         "routeOrder": [],
         "totalCost": 0.0,
         "estimatedDistanceKm": 0.0,
         "estimatedDurationMinutes": 0.0,
+        "totalStaticDurationMinutes": 0.0,
+        "trafficDelayMinutes": 0.0,
         "edgeCount": 0,
         "nodesExpanded": nodes_expanded,
         "executionTimeMs": round((time.perf_counter() - start_t) * 1000.0, 3),

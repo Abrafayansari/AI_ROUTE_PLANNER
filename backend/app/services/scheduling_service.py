@@ -8,6 +8,8 @@ from app.extensions import db
 from app.models import Distributor, OfficeLocation, RoutePlan, ScheduleEntry
 from app.models.route_stop import format_clock_from_iso
 from app.services.clustering_service import resolve_workspace_route_plan_id
+from app.services.google_maps_service import OBJECTIVE_FASTEST_TIME
+from app.services.routing_service import build_cost_matrix_with_routing
 from app.utils.metrics import haversine_km
 
 
@@ -80,19 +82,20 @@ def get_latest_schedule() -> dict | None:
         dist_dur = int(e.visit_duration_minutes or 30)
         start_time_str = format_clock_from_iso(e.scheduled_start) or "09:00"
 
-        dist_km: float | None = None
-        if dist is not None and prev_lat is not None and prev_lng is not None:
+        dist_km: float | None = (
+            round(float(e.distance_from_previous_km), 2)
+            if e.distance_from_previous_km is not None
+            else None
+        )
+        if dist_km is None and dist is not None and prev_lat is not None and prev_lng is not None:
             dist_km = round(
                 haversine_km(prev_lat, prev_lng, float(dist.latitude), float(dist.longitude)),
                 2,
             )
-            prev_lat = float(dist.latitude)
-            prev_lng = float(dist.longitude)
-        elif dist is not None:
+        if dist is not None:
             prev_lat = float(dist.latitude)
             prev_lng = float(dist.longitude)
 
-        # Calculate delay risk prediction (marginalizes Distance cleanly if coords unavailable)
         pred = bn.predict_visit(
             distributor_id=str(e.distributor_id) if e.distributor_id else None,
             distributor_name=e.distributor_name,
@@ -122,7 +125,9 @@ def get_latest_schedule() -> dict | None:
                 "closing_time": dist.closing_time if dist else "18:00",
                 "schedule_date": schedule_date,
                 "constraint_notes": e.constraint_notes or "",
+                "travel_from_previous_minutes": e.travel_from_previous_minutes,
                 "distanceKm": dist_km,
+                "dataSource": e.data_source or "simulated_fallback",
                 "delayRisk": pred["predictedRisk"],
                 "delayProbabilities": pred["probabilities"],
                 "recommendedBufferMinutes": pred["recommendedBufferMinutes"],
@@ -130,11 +135,29 @@ def get_latest_schedule() -> dict | None:
             }
         )
 
+    sched_ds = entries[0].data_source or "osrm_osm"
+    provider_map = {
+        "google_live_traffic": ("google_maps", "Google Maps", "Live traffic travel duration (Google Routes API)"),
+        "google_road_distance": ("google_maps", "Google Maps", "Static road travel duration (Google Routes API)"),
+        "osrm_osm": ("osrm", "OSRM / OpenStreetMap", "Estimated road travel duration (OSRM / OpenStreetMap — no live traffic)"),
+        "openrouteservice": ("openrouteservice", "OpenRouteService", "Estimated road travel duration (OpenRouteService — no live traffic)"),
+    }
+    p_id, p_label, dur_label = provider_map.get(
+        sched_ds,
+        ("simulated_fallback", "Fixed Buffer", "Fixed buffer schedule"),
+    )
+
     return {
         "routePlanId": route_plan_id,
         "officeId": str(office.id) if office else None,
         "officeName": office.name if office else None,
         "scheduleDate": schedule_date,
+        "provider": p_id,
+        "providerLabel": p_label,
+        "dataSource": sched_ds,
+        "isLiveTraffic": sched_ds == "google_live_traffic",
+        "durationType": "live_traffic" if sched_ds == "google_live_traffic" else "estimated_road_duration",
+        "durationLabel": dur_label,
         "entries": formatted,
         "bayesianAdvisory": {
             "evaluatedCount": len(formatted),
@@ -161,6 +184,85 @@ def run_and_save_schedule(cfg: dict) -> dict:
 
     office = _resolve_office(cfg.get("officeId"))
     dist_map = {str(d.id): d for d in dists}
+    ordered_dists = [dist_map[did] for did in dist_ids]
+
+    use_road_times = bool(cfg.get("useRoadTravelTimes", True))
+    travel_mode = cfg.get("travelMode", "DRIVE")
+    optimization_objective = cfg.get("optimizationObjective", OBJECTIVE_FASTEST_TIME)
+
+    csp_cfg = dict(cfg)
+    provider = "simulated_fallback"
+    provider_label = "Fixed Travel Buffer"
+    data_source = "simulated_fallback"
+    is_live_traffic = False
+    duration_type = "simulated"
+    duration_label = "Fixed buffer (O–D road travel times disabled)"
+    traffic_calculated_at = None
+    calculated_at = None
+    fallback_reason = None
+    provider_attempts: list[dict] = []
+
+    if use_road_times:
+        nodes = [
+            {
+                "id": str(office.id),
+                "name": office.name,
+                "latitude": float(office.latitude),
+                "longitude": float(office.longitude),
+                "isOffice": True,
+            }
+        ] + [
+            {
+                "id": str(d.id),
+                "name": d.name,
+                "latitude": float(d.latitude),
+                "longitude": float(d.longitude),
+                "isOffice": False,
+            }
+            for d in ordered_dists
+        ]
+        matrix = build_cost_matrix_with_routing(
+            nodes,
+            seed=42,
+            distance_multiplier=1.0,
+            travel_mode=travel_mode,  # type: ignore[arg-type]
+            optimization_objective=optimization_objective,  # type: ignore[arg-type]
+        )
+        provider = matrix.provider
+        provider_label = matrix.providerLabel
+        data_source = matrix.dataSource
+        is_live_traffic = matrix.isLiveTraffic
+        duration_type = matrix.durationType
+        duration_label = matrix.durationLabel
+        traffic_calculated_at = matrix.trafficCalculatedAt
+        calculated_at = matrix.calculatedAt
+        fallback_reason = matrix.fallbackReason
+        provider_attempts = matrix.providerAttempts
+
+        travel_times_matrix: dict[str, dict[str, float]] = {}
+        distance_km_matrix: dict[str, dict[str, float]] = {}
+        office_to_dist_min: dict[str, float] = {}
+        office_to_dist_km: dict[str, float] = {}
+
+        for j in range(1, len(nodes)):
+            dj = nodes[j]["id"]
+            office_to_dist_min[dj] = matrix.durationMinutes[0][j]
+            office_to_dist_km[dj] = matrix.distanceKm[0][j]
+
+        for i in range(1, len(nodes)):
+            di = nodes[i]["id"]
+            travel_times_matrix[di] = {}
+            distance_km_matrix[di] = {}
+            for j in range(1, len(nodes)):
+                dj = nodes[j]["id"]
+                travel_times_matrix[di][dj] = matrix.durationMinutes[i][j]
+                distance_km_matrix[di][dj] = matrix.distanceKm[i][j]
+
+        csp_cfg["travelTimesMatrix"] = travel_times_matrix
+        csp_cfg["distanceKmMatrix"] = distance_km_matrix
+        csp_cfg["officeToDistributorMinutes"] = office_to_dist_min
+        csp_cfg["officeToDistributorKm"] = office_to_dist_km
+        csp_cfg["dataSource"] = data_source
 
     csp_result = run_csp_scheduler(
         [
@@ -172,29 +274,31 @@ def run_and_save_schedule(cfg: dict) -> dict:
                 "openingTime": d.opening_time,
                 "closingTime": d.closing_time,
             }
-            for d in dists
+            for d in ordered_dists
         ],
-        cfg,
+        csp_cfg,
     )
 
     bn = get_bayesian_network()
     high_risk_entries: list[str] = []
     advisories: list[str] = []
 
-    # Run Bayesian inference on each scheduled stop starting from base office
     prev_lat = float(office.latitude)
     prev_lng = float(office.longitude)
     for entry in csp_result["scheduled"]:
         curr_d = dist_map.get(entry["distributorId"])
+        dist_km = entry.get("distanceKm")
+        if dist_km is None:
+            if curr_d is not None:
+                dist_km = round(
+                    haversine_km(prev_lat, prev_lng, float(curr_d.latitude), float(curr_d.longitude)),
+                    2,
+                )
+            else:
+                dist_km = 0.0
         if curr_d is not None:
-            dist_km = round(
-                haversine_km(prev_lat, prev_lng, float(curr_d.latitude), float(curr_d.longitude)),
-                2,
-            )
             prev_lat = float(curr_d.latitude)
             prev_lng = float(curr_d.longitude)
-        else:
-            dist_km = 0.0
 
         pred = bn.predict_visit(
             distributor_id=entry["distributorId"],
@@ -256,9 +360,12 @@ def run_and_save_schedule(cfg: dict) -> dict:
                 scheduled_end=_to_utc_datetime(schedule_date, entry["endTime"]),
                 visit_duration_minutes=entry["durationMinutes"],
                 priority=entry["priority"],
+                travel_from_previous_minutes=entry.get("travelMinutesFromPrevious"),
+                distance_from_previous_km=entry.get("distanceKm"),
+                data_source=data_source,
                 is_feasible=True,
                 constraint_notes=(
-                    f"{csp_result['constraintsSummary']} (+{entry['bufferMinutes']}m buffer) "
+                    f"{csp_result['constraintsSummary']} (+{entry['bufferMinutes']}m travel) "
                     f"[Bayes Risk: {entry.get('delayRisk', 'Low')}]"
                 ),
             )
@@ -270,5 +377,15 @@ def run_and_save_schedule(cfg: dict) -> dict:
         "officeId": str(office.id),
         "officeName": office.name,
         "scheduleDate": schedule_date,
+        "provider": provider,
+        "providerLabel": provider_label,
+        "dataSource": data_source,
+        "isLiveTraffic": is_live_traffic,
+        "durationType": duration_type,
+        "durationLabel": duration_label,
+        "trafficCalculatedAt": traffic_calculated_at,
+        "calculatedAt": calculated_at,
+        "fallbackReason": fallback_reason,
+        "providerAttempts": provider_attempts,
         **csp_result,
     }

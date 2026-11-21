@@ -7,6 +7,7 @@ from app.config import redact_secrets
 from app.extensions import db
 from app.routes.common import pydantic_error_response, rate_limit, require_database
 from app.services import (
+    AllRoutingProvidersFailedError,
     create_route_plan,
     delete_route_plan,
     generate_local_matrix,
@@ -44,12 +45,14 @@ def post_graph_matrix():
     try:
         data = generate_local_matrix(parsed.model_dump())
         return ok(data)
+    except AllRoutingProvidersFailedError as exc:
+        return fail(503, "ROUTING_PROVIDERS_UNAVAILABLE", str(exc), details=exc.to_details())
     except FileNotFoundError as exc:
         return fail(404, "NOT_FOUND", str(exc))
     except LookupError as exc:
         return fail(400, "INVALID_DISTRIBUTORS", str(exc))
     except Exception:
-        return fail(500, "MATRIX_ERROR", "Failed to generate local cost matrix.")
+        return fail(500, "MATRIX_ERROR", "Failed to compute road cost matrix.")
 
 
 @routes_bp.post("/optimize/preview")
@@ -64,6 +67,8 @@ def post_optimize_preview():
     try:
         data = preview_optimization(parsed.model_dump())
         return ok(data)
+    except AllRoutingProvidersFailedError as exc:
+        return fail(503, "ROUTING_PROVIDERS_UNAVAILABLE", str(exc), details=exc.to_details())
     except FileNotFoundError as exc:
         return fail(404, "NOT_FOUND", str(exc))
     except LookupError as exc:
@@ -130,6 +135,9 @@ def post_optimize_route_plan(plan_id: str):
             data,
             f"Optimized route plan using {data['selectedAlgorithm']} (recommended: {data['recommendedAlgorithm']}).",
         )
+    except AllRoutingProvidersFailedError as exc:
+        db.session.rollback()
+        return fail(503, "ROUTING_PROVIDERS_UNAVAILABLE", str(exc), details=exc.to_details())
     except FileNotFoundError as exc:
         db.session.rollback()
         return fail(404, "NOT_FOUND", str(exc))
@@ -184,9 +192,18 @@ def put_route_plan(plan_id: str):
     try:
         data = update_route_plan(plan_id, parsed.model_dump())
         return ok(data, "Route plan updated")
+    except AllRoutingProvidersFailedError as exc:
+        db.session.rollback()
+        return fail(503, "ROUTING_PROVIDERS_UNAVAILABLE", str(exc), details=exc.to_details())
     except FileNotFoundError:
         db.session.rollback()
         return fail(404, "NOT_FOUND", "Route plan not found.")
+    except LookupError as exc:
+        db.session.rollback()
+        return fail(400, "INVALID_DISTRIBUTORS", str(exc))
+    except ValueError as exc:
+        db.session.rollback()
+        return fail(400, "NO_DISTRIBUTORS", str(exc))
     except Exception as exc:
         db.session.rollback()
         print("PUT /api/route-plans/<id> error:", redact_secrets(str(exc)))

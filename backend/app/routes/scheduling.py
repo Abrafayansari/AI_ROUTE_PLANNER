@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from app.config import redact_secrets
 from app.extensions import db
 from app.routes.common import pydantic_error_response, rate_limit, require_database
-from app.services import get_latest_schedule, run_and_save_schedule
+from app.services import AllRoutingProvidersFailedError, get_latest_schedule, run_and_save_schedule
 from app.utils.responses import fail, ok
 from app.utils.validation import ScheduleRunInput
 
@@ -38,6 +38,9 @@ def run_schedule():
     try:
         result = run_and_save_schedule(parsed.model_dump())
         return ok(result, "CSP visit schedule generated and persisted.")
+    except AllRoutingProvidersFailedError as exc:
+        db.session.rollback()
+        return fail(503, "ROUTING_PROVIDERS_UNAVAILABLE", str(exc), details=exc.to_details())
     except LookupError as exc:
         db.session.rollback()
         return fail(400, "INVALID_DISTRIBUTORS", str(exc))

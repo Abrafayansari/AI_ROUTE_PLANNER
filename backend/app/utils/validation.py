@@ -9,6 +9,16 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 TIME_24H_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+TravelModeLiteral = Literal[
+    "simulated_vehicle",
+    "simulated_walking",
+    "simulated_van",
+    "DRIVE",
+    "TWO_WHEELER",
+    "WALK",
+]
+OptimizationObjectiveLiteral = Literal["FASTEST_TIME", "SHORTEST_DISTANCE"]
+
 
 def parse_time_to_minutes(time_str: str) -> int:
     m = TIME_24H_RE.match(time_str)
@@ -139,6 +149,9 @@ class ScheduleRunInput(BaseModel):
     lunchStartTime: str = "12:30"
     lunchDurationMinutes: int = Field(default=60, ge=15, le=120)
     maxVisitsPerDay: int = Field(default=10, ge=1, le=30)
+    travelMode: TravelModeLiteral = "DRIVE"
+    optimizationObjective: OptimizationObjectiveLiteral = "FASTEST_TIME"
+    useRoadTravelTimes: bool = True
     officeId: Optional[str] = None
     routePlanId: Optional[str] = None
 
@@ -184,9 +197,8 @@ class GraphMatrixInput(BaseModel):
     distributorIds: list[str] = Field(..., max_length=25)
     seed: int = Field(default=42, ge=0, le=1_000_000)
     distanceMultiplier: float = Field(default=1.0, ge=1.0, le=3.0)
-    travelMode: Literal["simulated_vehicle", "simulated_walking", "simulated_van"] = (
-        "simulated_vehicle"
-    )
+    travelMode: TravelModeLiteral = "DRIVE"
+    optimizationObjective: OptimizationObjectiveLiteral = "FASTEST_TIME"
 
     @field_validator("officeId")
     @classmethod
@@ -217,9 +229,8 @@ class CreateRoutePlanInput(BaseModel):
     planDate: str
     officeId: str
     distributorIds: list[str] = Field(..., max_length=25)
-    travelMode: Literal["simulated_vehicle", "simulated_walking", "simulated_van"] = (
-        "simulated_vehicle"
-    )
+    travelMode: TravelModeLiteral = "DRIVE"
+    optimizationObjective: OptimizationObjectiveLiteral = "FASTEST_TIME"
     returnToOffice: bool = True
     distanceMultiplier: float = Field(default=1.0, ge=1.0, le=3.0)
     graphSeed: int = Field(default=42, ge=0, le=1_000_000)
@@ -257,13 +268,14 @@ class OptimizeRouteInput(BaseModel):
 
     distributorIds: Optional[list[str]] = None
     selectedAlgorithm: Optional[Literal["BFS", "UCS", "A*", "GENETIC_ALGORITHM"]] = None
+    optimizationObjective: Optional[OptimizationObjectiveLiteral] = None
     gaPopulationSize: int = Field(default=80, ge=20, le=300)
     gaGenerations: int = Field(default=150, ge=20, le=500)
     gaMutationRate: float = Field(default=0.18, ge=0.01, le=0.8)
     seed: Optional[int] = Field(default=None, ge=0, le=1_000_000)
     distanceMultiplier: Optional[float] = Field(default=None, ge=1.0, le=3.0)
     returnToOffice: Optional[bool] = None
-    travelMode: Optional[Literal["simulated_vehicle", "simulated_walking", "simulated_van"]] = None
+    travelMode: Optional[TravelModeLiteral] = None
 
     @field_validator("distributorIds")
     @classmethod
@@ -282,6 +294,7 @@ class UpdateRoutePlanInput(BaseModel):
     planDate: Optional[str] = None
     status: Optional[Literal["draft", "optimized", "scheduled", "in_progress", "completed"]] = None
     selectedAlgorithm: Optional[Literal["BFS", "UCS", "A*", "GENETIC_ALGORITHM"]] = None
+    optimizationObjective: Optional[OptimizationObjectiveLiteral] = None
     notes: Optional[str] = Field(default=None, max_length=1000)
 
     @field_validator("name", mode="before")
@@ -295,6 +308,21 @@ class UpdateRoutePlanInput(BaseModel):
         if v is not None and not DATE_RE.match(v):
             raise ValueError("Plan date must be YYYY-MM-DD")
         return v
+
+
+class WaypointCoordInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    latitude: float = Field(..., ge=-90.0, le=90.0)
+    longitude: float = Field(..., ge=-180.0, le=180.0)
+
+
+class RouteGeometryInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    waypoints: list[WaypointCoordInput] = Field(..., min_length=2, max_length=27)
+    travelMode: TravelModeLiteral = "DRIVE"
+    optimizationObjective: OptimizationObjectiveLiteral = "FASTEST_TIME"
 
 
 class StopStatusInput(BaseModel):
@@ -343,4 +371,3 @@ class RouteDelayInput(BaseModel):
         if not is_valid_uuid(v):
             raise ValueError("Invalid routePlanId UUID")
         return str(UUID(v))
-

@@ -19,9 +19,32 @@ export interface DatabaseHealth {
   message: string;
 }
 
+export interface ProviderAttempt {
+  provider: string;
+  status: 'succeeded' | 'failed' | 'skipped';
+  reason?: string;
+}
+
+export interface MapsStatusPayload {
+  serverConfigured: boolean;
+  googleServerConfigured?: boolean;
+  clientKeyConfigured: boolean;
+  osrmEnabled?: boolean;
+  osrmBaseUrl?: string;
+  osrmProfile?: string;
+  openRouteServiceConfigured?: boolean;
+  providerPriority?: string[];
+  provider: RoutingProvider;
+  providerLabel?: string;
+  fallbackActive: boolean;
+  supportedObjectives: OptimizationObjective[];
+  defaultObjective: OptimizationObjective;
+}
+
 export interface HealthPayload {
   app: string;
   database: DatabaseHealth;
+  googleMaps?: MapsStatusPayload;
 }
 
 export interface OfficeLocation {
@@ -105,6 +128,7 @@ export interface ScheduledVisitEntry {
   endMinutes: number;
   durationMinutes: number;
   bufferMinutes: number;
+  travelMinutesFromPrevious?: number;
   openingTime: string;
   closingTime: string;
   distanceKm?: number;
@@ -130,6 +154,16 @@ export interface CspRunResult {
   officeId?: string | null;
   officeName?: string | null;
   scheduleDate: string;
+  provider?: RoutingProvider;
+  providerLabel?: string;
+  dataSource?: DataSourceType;
+  isLiveTraffic?: boolean;
+  durationType?: 'live_traffic' | 'estimated_road_duration' | 'simulated';
+  durationLabel?: string;
+  trafficCalculatedAt?: string | null;
+  calculatedAt?: string | null;
+  fallbackReason?: string | null;
+  providerAttempts?: ProviderAttempt[];
   allDistributorsScheduled: boolean;
   usesFixedTravelBuffer: boolean;
   scheduled: ScheduledVisitEntry[];
@@ -158,43 +192,115 @@ export interface GraphNode {
 }
 
 export type AlgorithmName = 'BFS' | 'UCS' | 'A*' | 'GENETIC_ALGORITHM';
+export type OptimizationObjective = 'FASTEST_TIME' | 'SHORTEST_DISTANCE';
+export type RoutingProvider = 'google_maps' | 'osrm' | 'openrouteservice' | 'simulated_fallback';
+export type DataSourceType =
+  | 'google_live_traffic'
+  | 'google_road_distance'
+  | 'osrm_osm'
+  | 'openrouteservice'
+  | 'simulated_fallback';
+export type TravelMode =
+  | 'DRIVE'
+  | 'TWO_WHEELER'
+  | 'WALK'
+  | 'simulated_vehicle'
+  | 'simulated_walking'
+  | 'simulated_van';
+
+export interface RouteGeometryPayload {
+  provider?: RoutingProvider;
+  providerLabel?: string;
+  encodedPolyline: string | null;
+  dataSource: DataSourceType;
+  isLiveTraffic?: boolean;
+  durationType?: 'live_traffic' | 'estimated_road_duration' | 'simulated';
+  durationLabel?: string;
+  trafficCalculatedAt: string | null;
+  calculatedAt?: string | null;
+  distanceKm?: number;
+  durationMinutes?: number;
+  staticDurationMinutes?: number;
+  trafficDelayMinutes?: number;
+  routeLabels?: string[];
+  fallbackReason?: string | null;
+  providerAttempts?: ProviderAttempt[];
+  cacheHit?: boolean;
+}
 
 export interface AlgorithmComparisonItem {
   algorithm: AlgorithmName;
   isInformed: boolean;
   isHeuristic?: boolean;
   isOptimalForObjective: boolean;
+  optimizationObjective?: OptimizationObjective;
   objectiveDescription: string;
   routeOrder: number[];
   totalCost: number;
   estimatedDistanceKm: number;
   estimatedDurationMinutes: number;
+  totalStaticDurationMinutes?: number;
+  trafficDelayMinutes?: number;
   edgeCount: number;
   nodesExpanded: number;
   executionTimeMs: number;
   completed: boolean;
   warning?: string;
   generationsRun?: number;
-  convergenceHistory?: Array<{ generation: number; bestCost: number }>;
+  convergenceHistory?: Array<{ generation: number; bestCost: number; unit?: 'min' | 'km' }>;
 }
 
 export interface OptimizePreviewResponse {
   nodes: GraphNode[];
+  optimizationObjective: OptimizationObjective;
+  provider?: RoutingProvider;
+  providerLabel?: string;
+  dataSource: DataSourceType;
+  isLiveTraffic?: boolean;
+  durationType?: 'live_traffic' | 'estimated_road_duration' | 'simulated';
+  durationLabel?: string;
+  trafficCalculatedAt: string | null;
+  calculatedAt?: string | null;
+  fallbackReason?: string | null;
+  providerAttempts?: ProviderAttempt[];
+  roadDistanceAvailable?: boolean;
+  encodedPolyline?: string | null;
+  normalDurationMinutes?: number | null;
+  trafficDelayMinutes?: number | null;
   matrix: {
     distanceKm: number[][];
     durationMinutes: number[][];
+    staticDurationMinutes?: number[][];
     straightLineKm: number[][];
     cacheHit: boolean;
     speedKmh: number;
     seed: number;
     distanceMultiplier: number;
-    travelMode: 'simulated_vehicle' | 'simulated_walking' | 'simulated_van';
+    travelMode: TravelMode;
+    optimizationObjective?: OptimizationObjective;
+    provider?: RoutingProvider;
+    providerLabel?: string;
+    dataSource?: DataSourceType;
+    isLiveTraffic?: boolean;
+    durationType?: 'live_traffic' | 'estimated_road_duration' | 'simulated';
+    durationLabel?: string;
+    trafficCalculatedAt?: string | null;
+    calculatedAt?: string | null;
+    fallbackReason?: string | null;
+    roadDistanceAvailable?: boolean;
   };
   recommendedAlgorithm: AlgorithmName | null;
   appliedConfig?: {
     seed: number;
     distanceMultiplier: number;
-    travelMode: 'simulated_vehicle' | 'simulated_walking' | 'simulated_van';
+    travelMode: TravelMode;
+    optimizationObjective?: OptimizationObjective;
+    provider?: RoutingProvider;
+    providerLabel?: string;
+    dataSource?: DataSourceType;
+    isLiveTraffic?: boolean;
+    durationType?: 'live_traffic' | 'estimated_road_duration' | 'simulated';
+    durationLabel?: string;
     returnToOffice: boolean;
     gaPopulationSize: number;
     gaGenerations: number;
@@ -203,6 +309,7 @@ export interface OptimizePreviewResponse {
   results: AlgorithmComparisonItem[];
   delayPredictions?: BayesianPrediction[];
   delayPredictionsByAlgorithm?: Partial<Record<AlgorithmName, BayesianPrediction[]>>;
+  geometryByAlgorithm?: Partial<Record<AlgorithmName, RouteGeometryPayload>>;
 }
 
 export interface RoutePlanSummary {
@@ -214,7 +321,17 @@ export interface RoutePlanSummary {
   office_address?: string;
   office_latitude?: number;
   office_longitude?: number;
-  travel_mode: 'simulated_vehicle' | 'simulated_walking' | 'simulated_van';
+  travel_mode: TravelMode;
+  optimization_objective?: OptimizationObjective;
+  data_source?: DataSourceType;
+  provider_label?: string;
+  is_live_traffic?: boolean;
+  duration_label?: string;
+  traffic_calculated_at?: string | null;
+  normal_duration_minutes?: number | null;
+  traffic_delay_minutes?: number | null;
+  encoded_polyline?: string | null;
+  map_provider?: string;
   return_to_office: boolean;
   recommended_algorithm: AlgorithmName | null;
   selected_algorithm: AlgorithmName | null;
@@ -245,6 +362,7 @@ export interface RouteStopDetail {
   estimated_arrival_hhmm: string | null;
   estimated_departure_hhmm: string | null;
   travel_from_previous_minutes: number | null;
+  static_travel_from_previous_minutes?: number | null;
   distance_from_previous_km: number | null;
   visit_duration_minutes: number;
   status: 'pending' | 'visited' | 'skipped';
@@ -256,6 +374,10 @@ export interface SavedAlgorithmRun {
   id: string;
   route_plan_id: string;
   algorithm_name: AlgorithmName;
+  optimization_objective?: OptimizationObjective;
+  data_source?: DataSourceType;
+  traffic_calculated_at?: string | null;
+  encoded_polyline?: string | null;
   status: string;
   route_order: string[];
   route_names: Array<{ nodeIndex: number; id: string; name: string; isOffice: boolean }>;
@@ -271,6 +393,8 @@ export interface SavedAlgorithmRun {
     objectiveDescription?: string;
     edgeCount?: number;
     isOptimalForObjective?: boolean;
+    totalStaticDurationMinutes?: number;
+    trafficDelayMinutes?: number;
   };
   error_message: string | null;
   created_at: string;

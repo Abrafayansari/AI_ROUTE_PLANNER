@@ -9,6 +9,7 @@ from app.routes import (
     clustering_bp,
     distributors_bp,
     health_bp,
+    maps_bp,
     office_bp,
     predictions_bp,
     routes_bp,
@@ -48,6 +49,7 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     flask_app.register_blueprint(scheduling_bp, url_prefix="/api")
     flask_app.register_blueprint(routes_bp, url_prefix="/api")
     flask_app.register_blueprint(predictions_bp, url_prefix="/api")
+    flask_app.register_blueprint(maps_bp, url_prefix="/api")
 
     @flask_app.before_request
     def _track_start():
@@ -73,8 +75,8 @@ def create_app(config_overrides: dict | None = None) -> Flask:
                 else 0.0
             )
             provider = (
-                "local_simulated_graph"
-                if ("/optimize" in request.path or "/graph" in request.path)
+                "routing_api"
+                if ("/optimize" in request.path or "/graph" in request.path or "/maps" in request.path)
                 else "internal_api"
             )
             log_api_request(

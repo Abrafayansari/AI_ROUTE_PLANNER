@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS route_plans (
     officer_id UUID REFERENCES field_officers(id) ON DELETE SET NULL,
     office_id UUID NOT NULL REFERENCES office_locations(id) ON DELETE RESTRICT,
     travel_mode VARCHAR(40) NOT NULL DEFAULT 'simulated_vehicle'
-        CHECK (travel_mode IN ('simulated_vehicle', 'simulated_walking', 'simulated_van')),
+        CHECK (travel_mode IN ('simulated_vehicle', 'simulated_walking', 'simulated_van', 'DRIVE', 'TWO_WHEELER', 'WALK')),
+    optimization_objective VARCHAR(30) NOT NULL DEFAULT 'FASTEST_TIME'
+        CHECK (optimization_objective IN ('FASTEST_TIME', 'SHORTEST_DISTANCE')),
     return_to_office BOOLEAN NOT NULL DEFAULT TRUE,
     recommended_algorithm VARCHAR(50)
         CHECK (recommended_algorithm IS NULL OR recommended_algorithm IN ('BFS', 'UCS', 'A*', 'GENETIC_ALGORITHM')),
@@ -71,11 +73,16 @@ CREATE TABLE IF NOT EXISTS route_plans (
         CHECK (selected_algorithm IS NULL OR selected_algorithm IN ('BFS', 'UCS', 'A*', 'GENETIC_ALGORITHM')),
     total_distance_km DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (total_distance_km >= 0),
     total_duration_minutes INTEGER NOT NULL DEFAULT 0 CHECK (total_duration_minutes >= 0),
+    normal_duration_minutes INTEGER CHECK (normal_duration_minutes IS NULL OR normal_duration_minutes >= 0),
+    traffic_delay_minutes INTEGER CHECK (traffic_delay_minutes IS NULL OR traffic_delay_minutes >= 0),
     distance_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0 CHECK (distance_multiplier >= 1.0 AND distance_multiplier <= 3.0),
     graph_seed INTEGER NOT NULL DEFAULT 42,
     status VARCHAR(30) NOT NULL DEFAULT 'draft'
         CHECK (status IN ('draft', 'optimized', 'scheduled', 'in_progress', 'completed')),
     map_provider VARCHAR(40) NOT NULL DEFAULT 'simulated',
+    data_source VARCHAR(40) NOT NULL DEFAULT 'simulated_fallback',
+    traffic_calculated_at TIMESTAMPTZ,
+    encoded_polyline TEXT,
     notes TEXT DEFAULT '',
     is_demo BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -94,6 +101,7 @@ CREATE TABLE IF NOT EXISTS route_stops (
     estimated_arrival TIMESTAMPTZ,
     estimated_departure TIMESTAMPTZ,
     travel_from_previous_minutes INTEGER CHECK (travel_from_previous_minutes IS NULL OR travel_from_previous_minutes >= 0),
+    static_travel_from_previous_minutes INTEGER CHECK (static_travel_from_previous_minutes IS NULL OR static_travel_from_previous_minutes >= 0),
     distance_from_previous_km DOUBLE PRECISION CHECK (distance_from_previous_km IS NULL OR distance_from_previous_km >= 0),
     visit_duration_minutes INTEGER NOT NULL DEFAULT 0 CHECK (visit_duration_minutes >= 0),
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
@@ -125,6 +133,10 @@ CREATE TABLE IF NOT EXISTS schedule_entries (
     visit_duration_minutes INTEGER NOT NULL CHECK (visit_duration_minutes > 0),
     priority SMALLINT NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
     cluster_number INTEGER,
+    officer_id UUID REFERENCES field_officers(id) ON DELETE SET NULL,
+    travel_from_previous_minutes INTEGER,
+    distance_from_previous_km DOUBLE PRECISION,
+    data_source VARCHAR(40) DEFAULT 'simulated_fallback',
     is_feasible BOOLEAN NOT NULL DEFAULT TRUE,
     constraint_notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -137,6 +149,10 @@ CREATE TABLE IF NOT EXISTS algorithm_runs (
     route_plan_id UUID NOT NULL REFERENCES route_plans(id) ON DELETE CASCADE,
     algorithm_name VARCHAR(50) NOT NULL
         CHECK (algorithm_name IN ('BFS', 'UCS', 'A*', 'GENETIC_ALGORITHM')),
+    optimization_objective VARCHAR(30) NOT NULL DEFAULT 'FASTEST_TIME',
+    data_source VARCHAR(40) NOT NULL DEFAULT 'simulated_fallback',
+    traffic_calculated_at TIMESTAMPTZ,
+    encoded_polyline TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'completed'
         CHECK (status IN ('pending', 'running', 'completed', 'failed')),
     route_order UUID[] NOT NULL DEFAULT '{}',

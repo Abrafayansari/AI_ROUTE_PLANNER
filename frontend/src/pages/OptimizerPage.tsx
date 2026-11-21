@@ -1,15 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Map as MapIcon, Play, Save, ShieldAlert } from 'lucide-react';
+import { Clock, Globe, Map as MapIcon, Play, Route, Save, ShieldAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { SchematicMap, type SchematicPoint } from '../components/SchematicMap';
 import { LeafletRouteMap } from '../components/LeafletRouteMap';
+import { GoogleKarachiMap } from '../components/GoogleKarachiMap';
 import type {
   AlgorithmComparisonItem,
+  AlgorithmName,
   Distributor,
+  MapsStatusPayload,
   OfficeLocation,
+  OptimizationObjective,
   OptimizePreviewResponse,
+  TravelMode,
 } from '../types';
 
 interface OptimizerPageProps {
@@ -24,44 +29,48 @@ const DEFAULT_GA_MUTATION_RATE = 0.18;
 
 export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
   const navigate = useNavigate();
+  const hasGoogleBrowserKey = Boolean((import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim());
+
   const [offices, setOffices] = useState<OfficeLocation[]>([]);
   const [officeId, setOfficeId] = useState<string>('');
   const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const [planName, setPlanName] = useState('Daily Metro Route');
+  const [planName, setPlanName] = useState('Karachi Daily Sales Route');
   const [planDate, setPlanDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [travelMode, setTravelMode] = useState<'simulated_vehicle' | 'simulated_van' | 'simulated_walking'>('simulated_vehicle');
+  const [optimizationObjective, setOptimizationObjective] =
+    useState<OptimizationObjective>('FASTEST_TIME');
+  const [travelMode, setTravelMode] = useState<TravelMode>('DRIVE');
   const [returnToOffice, setReturnToOffice] = useState(true);
-
-  const [seed, setSeed] = useState(DEFAULT_GRAPH_SEED);
-  const [distanceMultiplier, setDistanceMultiplier] = useState(DEFAULT_DISTANCE_MULTIPLIER);
-  const [gaPopulationSize, setGaPopulationSize] = useState(DEFAULT_GA_POPULATION_SIZE);
-  const [gaGenerations, setGaGenerations] = useState(DEFAULT_GA_GENERATIONS);
-  const [gaMutationRate, setGaMutationRate] = useState(DEFAULT_GA_MUTATION_RATE);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const [mapsStatus, setMapsStatus] = useState<MapsStatusPayload | null>(null);
   const [preview, setPreview] = useState<OptimizePreviewResponse | null>(null);
-  const [activeAlgo, setActiveAlgo] = useState<'BFS' | 'UCS' | 'A*' | 'GENETIC_ALGORITHM'>('A*');
-  const [mapViewMode, setMapViewMode] = useState<'schematic' | 'leaflet'>('leaflet');
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [activeAlgo, setActiveAlgo] = useState<AlgorithmName>('A*');
+  const [activePolyline, setActivePolyline] = useState<string | null>(null);
+  const [mapViewMode, setMapViewMode] = useState<'google' | 'leaflet' | 'schematic'>(
+    hasGoogleBrowserKey ? 'google' : 'leaflet'
+  );
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [offRes, distRes] = await Promise.all([
+        const [offRes, distRes, statusRes] = await Promise.all([
           api.getOffices(),
           api.getDistributors({ active: 'true', pageSize: 100 }),
+          api.getMapsStatus().catch(() => null),
         ]);
         setOffices(offRes.data.offices);
         const defOff = offRes.data.defaultOffice || offRes.data.offices[0];
         if (defOff) setOfficeId(defOff.id);
         setDistributors(distRes.data.items);
         setSelectedIds(distRes.data.items.slice(0, 9).map((d) => d.id));
+        if (statusRes?.data) setMapsStatus(statusRes.data);
       } catch (err) {
         onNotify('error', err instanceof Error ? err.message : 'Unable to load optimizer inputs');
       } finally {
@@ -71,8 +80,10 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
     void load();
   }, []);
 
-  const handleRunComparison = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeComparison = async (
+    objective: OptimizationObjective,
+    mode: TravelMode = travelMode
+  ) => {
     if (!officeId) {
       onNotify('error', 'Create or select an office location first.');
       return;
@@ -82,30 +93,82 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
       return;
     }
     setRunning(true);
+    setPreviewError(null);
     try {
       const res = await api.previewOptimization({
         officeId,
         distributorIds: selectedIds,
-        seed,
-        distanceMultiplier,
-        travelMode,
+        seed: DEFAULT_GRAPH_SEED,
+        distanceMultiplier: DEFAULT_DISTANCE_MULTIPLIER,
+        travelMode: mode,
+        optimizationObjective: objective,
         returnToOffice,
-        gaPopulationSize,
-        gaGenerations,
-        gaMutationRate,
+        gaPopulationSize: DEFAULT_GA_POPULATION_SIZE,
+        gaGenerations: DEFAULT_GA_GENERATIONS,
+        gaMutationRate: DEFAULT_GA_MUTATION_RATE,
       });
       setPreview(res.data);
-      if (res.data.recommendedAlgorithm) {
-        setActiveAlgo(res.data.recommendedAlgorithm);
-      }
+      const nextAlgo = res.data.recommendedAlgorithm || 'A*';
+      setActiveAlgo(nextAlgo);
+      setActivePolyline(res.data.encodedPolyline ?? null);
+      const modeLabel =
+        objective === 'FASTEST_TIME' ? 'Fastest Route (Travel Time)' : 'Shortest Distance (Road km)';
+      const provLabel = res.data.providerLabel || res.data.dataSource.replace(/_/g, ' ');
       onNotify(
         'success',
-        `Ran BFS, UCS, A*, and GA on the same local cost matrix (${res.data.matrix.cacheHit ? 'cached' : 'generated'}).`
+        `Ran BFS, UCS, A*, and GA using ${modeLabel} (${provLabel}).`
       );
     } catch (err) {
-      onNotify('error', err instanceof Error ? err.message : 'Optimization failed');
+      const msg = err instanceof Error ? err.message : 'Real-road routing optimization failed';
+      setPreview(null);
+      setActivePolyline(null);
+      setPreviewError(msg);
+      onNotify('error', msg);
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleRunComparison = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeComparison(optimizationObjective, travelMode);
+  };
+
+  const handleObjectiveChange = (nextObjective: OptimizationObjective) => {
+    if (nextObjective === optimizationObjective) return;
+    setOptimizationObjective(nextObjective);
+    if (preview && officeId && selectedIds.length > 0 && !running) {
+      void executeComparison(nextObjective, travelMode);
+    }
+  };
+
+  const handleSelectAlgorithmRow = async (r: AlgorithmComparisonItem) => {
+    if (!r.completed || !preview) return;
+    setActiveAlgo(r.algorithm);
+    const existingGeom = preview.geometryByAlgorithm?.[r.algorithm];
+    if (existingGeom !== undefined) {
+      setActivePolyline(existingGeom.encodedPolyline ?? null);
+      return;
+    }
+    const waypoints = r.routeOrder
+      .map((idx) => preview.nodes[idx])
+      .filter(Boolean)
+      .map((n) => ({ latitude: n.latitude, longitude: n.longitude }));
+    if (waypoints.length >= 2) {
+      try {
+        const gRes = await api.computeRouteGeometry({
+          waypoints,
+          travelMode,
+          optimizationObjective: preview.optimizationObjective || optimizationObjective,
+        });
+        setActivePolyline(gRes.data.encodedPolyline ?? null);
+      } catch (err) {
+        setActivePolyline(null);
+        onNotify(
+          'error',
+          err instanceof Error ? err.message : 'Unable to fetch road geometry for selected route'
+        );
+      }
     }
   };
 
@@ -113,27 +176,30 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
     if (!officeId || selectedIds.length === 0) return;
     setSaving(true);
     try {
+      const activeObj = preview?.optimizationObjective || optimizationObjective;
       const createRes = await api.createRoutePlan({
-        name: planName.trim() || 'Daily Metro Route',
+        name: planName.trim() || 'Karachi Daily Sales Route',
         planDate,
         officeId,
         distributorIds: selectedIds,
         travelMode,
+        optimizationObjective: activeObj,
         returnToOffice,
-        distanceMultiplier,
-        graphSeed: seed,
+        distanceMultiplier: DEFAULT_DISTANCE_MULTIPLIER,
+        graphSeed: DEFAULT_GRAPH_SEED,
       });
       const planId = createRes.data.id;
       await api.optimizeRoutePlan(planId, {
         distributorIds: selectedIds,
         selectedAlgorithm: activeAlgo,
-        seed,
-        distanceMultiplier,
+        optimizationObjective: activeObj,
+        seed: DEFAULT_GRAPH_SEED,
+        distanceMultiplier: DEFAULT_DISTANCE_MULTIPLIER,
         returnToOffice,
         travelMode,
-        gaPopulationSize,
-        gaGenerations,
-        gaMutationRate,
+        gaPopulationSize: DEFAULT_GA_POPULATION_SIZE,
+        gaGenerations: DEFAULT_GA_GENERATIONS,
+        gaMutationRate: DEFAULT_GA_MUTATION_RATE,
       });
       onNotify('success', 'Route plan, stops, and all 4 algorithm comparisons saved to database.');
       navigate(`/saved-plans/${planId}`);
@@ -151,8 +217,9 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
   const activeResult: AlgorithmComparisonItem | undefined = preview?.results.find(
     (r) => r.algorithm === activeAlgo
   );
-
   const gaResult = preview?.results.find((r) => r.algorithm === 'GENETIC_ALGORITHM');
+  const activeObjective: OptimizationObjective =
+    preview?.optimizationObjective || optimizationObjective;
 
   const selectedOffice = offices.find((o) => o.id === officeId) || null;
   const mapPoints: SchematicPoint[] = preview
@@ -194,18 +261,85 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
   const activeDelayPredictions =
     preview?.delayPredictionsByAlgorithm?.[activeAlgo] ?? preview?.delayPredictions ?? [];
 
+  const dataSource = preview?.dataSource ?? 'osrm_osm';
+  const unitLabel = activeObjective === 'FASTEST_TIME' ? 'min' : 'km';
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-slate-200 bg-white px-5 py-3.5 text-xs text-slate-600">
         <span className="font-semibold text-slate-900">
-          Weeks 2, 3, 4 & 7 · Agent Environment & Route Search Comparison:
+          Dual-Objective Real-Road Route Optimizer (Weeks 2, 3, 4 &amp; 7):
         </span>{' '}
-        Models the field officer as an agent starting at the office (<code className="font-mono">state = (location, visitedSet)</code>). Edges use locally calculated Haversine straight-line distances scaled by a simulated multiplier (no external road or routing API). BFS minimizes edge count; UCS (uninformed) and A* (informed MST heuristic) minimize simulated distance; GA searches permutations heuristically.
+        All route optimization runs on the Python backend (BFS hop baseline, UCS exact, A* admissible MST heuristic, and GA permutation search). Real road distances and travel times are fetched using the prioritized provider chain:{' '}
+        <span className="font-medium text-slate-800">
+          {mapsStatus?.providerPriority
+            ? mapsStatus.providerPriority
+                .map((p) =>
+                  p === 'google_maps'
+                    ? 'Google Maps'
+                    : p === 'osrm'
+                      ? 'OSRM / OpenStreetMap'
+                      : 'OpenRouteService'
+                )
+                .join(' → ')
+            : 'Google Maps (if configured) → OSRM / OpenStreetMap → OpenRouteService (if configured)'}
+        </span>
+        .
       </div>
 
       {selectedIds.length > 12 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900">
-          Warning: Exact state-space search (BFS, UCS, A*) grows as n · 2^n and is capped at 12 distributors to prevent server overload. For {selectedIds.length} stops, Genetic Algorithm (GA) will return a heuristic tour while exact algorithms will report the cap warning.
+          Warning: Exact state-space search (BFS, UCS, A*) grows as n · 2^n and is capped at 12 distributors. For {selectedIds.length} stops, Genetic Algorithm (GA) will return a heuristic tour while exact algorithms report the cap warning.
+        </div>
+      )}
+
+      {previewError && (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-5 py-4 text-xs text-red-900">
+          <p className="font-semibold text-red-950">
+            Real-Road Routing Unavailable — No Simulated Fallback Returned
+          </p>
+          <p className="mt-1 leading-relaxed">{previewError}</p>
+        </div>
+      )}
+
+      {preview && (
+        <div
+          className={`rounded-lg border px-5 py-3 text-xs ${
+            preview.isLiveTraffic
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              : 'border-sky-200 bg-sky-50 text-sky-950'
+          }`}
+        >
+          <strong className="font-semibold">
+            {preview.providerLabel ||
+              (preview.dataSource === 'osrm_osm'
+                ? 'OSRM / OpenStreetMap'
+                : preview.dataSource === 'openrouteservice'
+                  ? 'OpenRouteService'
+                  : 'Google Maps')}{' '}
+            Active
+          </strong>{' '}
+          ·{' '}
+          <span>
+            {preview.durationLabel ||
+              (preview.isLiveTraffic
+                ? 'Live traffic travel duration'
+                : 'Estimated road travel duration (no live traffic)')}
+          </span>
+          {(preview.trafficCalculatedAt || preview.calculatedAt) && (
+            <>
+              {' '}
+              · Calculated at:{' '}
+              <span className="font-mono">
+                {new Date(
+                  preview.trafficCalculatedAt || preview.calculatedAt || ''
+                ).toLocaleString()}
+              </span>
+            </>
+          )}
+          {preview.fallbackReason && (
+            <p className="mt-1 text-[11px] opacity-85">Failover note: {preview.fallbackReason}</p>
+          )}
         </div>
       )}
 
@@ -215,6 +349,50 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
           className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 lg:col-span-4"
         >
           <h3 className="text-base font-semibold text-slate-900">Route Problem Setup</h3>
+
+          {/* Dual Optimization Objective Selector */}
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1.5">
+              Optimization Objective
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleObjectiveChange('FASTEST_TIME')}
+                className={`flex flex-col items-start rounded-md border p-2.5 text-left transition-colors ${
+                  optimizationObjective === 'FASTEST_TIME'
+                    ? 'border-blue-600 bg-blue-50 text-blue-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
+                  <Clock className="h-3.5 w-3.5" />
+                  Fastest Route
+                </span>
+                <span className="mt-0.5 text-[11px] opacity-80">
+                  Min. traffic travel time
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleObjectiveChange('SHORTEST_DISTANCE')}
+                className={`flex flex-col items-start rounded-md border p-2.5 text-left transition-colors ${
+                  optimizationObjective === 'SHORTEST_DISTANCE'
+                    ? 'border-blue-600 bg-blue-50 text-blue-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
+                  <Route className="h-3.5 w-3.5" />
+                  Shortest Distance
+                </span>
+                <span className="mt-0.5 text-[11px] opacity-80">
+                  Min. road distance (km)
+                </span>
+              </button>
+            </div>
+          </div>
 
           <div>
             <label className="block text-xs font-medium text-slate-700">Plan Name</label>
@@ -256,19 +434,16 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-700">Simulated Mode</label>
+              <label className="block text-xs font-medium text-slate-700">Travel Mode</label>
               <select
                 value={travelMode}
-                onChange={(e) =>
-                  setTravelMode(
-                    e.target.value as 'simulated_vehicle' | 'simulated_van' | 'simulated_walking'
-                  )
-                }
+                onChange={(e) => setTravelMode(e.target.value as TravelMode)}
                 className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
               >
-                <option value="simulated_vehicle">Car (35 km/h sim.)</option>
-                <option value="simulated_van">Delivery Van (28 km/h sim.)</option>
-                <option value="simulated_walking">Walking (5 km/h sim.)</option>
+                <option value="DRIVE">Car / Vehicle (DRIVE)</option>
+                <option value="TWO_WHEELER">Motorcycle (TWO_WHEELER)</option>
+                <option value="WALK">Walking (WALK)</option>
+                <option value="simulated_van">Delivery Van (28 km/h)</option>
               </select>
             </div>
             <div className="flex items-end pb-1.5">
@@ -324,100 +499,10 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
             </div>
           </div>
 
-          <div className="rounded-md border border-slate-200 bg-slate-50/70 p-3">
-            <div className="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setShowAdvanced((v) => !v)}
-                className="text-xs font-semibold text-slate-700 hover:text-slate-900"
-              >
-                {showAdvanced ? '▾ Hide Advanced Optimizer Settings' : '▸ Advanced Optimizer Settings'}
-              </button>
-              <span className="font-mono text-[11px] text-slate-500">
-                Seed {seed} · ×{distanceMultiplier}
-              </span>
-            </div>
-
-            {showAdvanced && (
-              <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-700">Graph Seed</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={1000000}
-                      value={seed}
-                      onChange={(e) => setSeed(Number(e.target.value))}
-                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-700">Dist. Multiplier</label>
-                    <input
-                      type="number"
-                      min={0.5}
-                      max={3.0}
-                      step={0.05}
-                      value={distanceMultiplier}
-                      onChange={(e) => setDistanceMultiplier(Number(e.target.value))}
-                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-700">GA Pop</label>
-                    <input
-                      type="number"
-                      min={10}
-                      max={500}
-                      value={gaPopulationSize}
-                      onChange={(e) => setGaPopulationSize(Number(e.target.value))}
-                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-700">GA Gens</label>
-                    <input
-                      type="number"
-                      min={10}
-                      max={1000}
-                      value={gaGenerations}
-                      onChange={(e) => setGaGenerations(Number(e.target.value))}
-                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-700">Mutation</label>
-                    <input
-                      type="number"
-                      min={0.01}
-                      max={0.95}
-                      step={0.01}
-                      value={gaMutationRate}
-                      onChange={(e) => setGaMutationRate(Number(e.target.value))}
-                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSeed(DEFAULT_GRAPH_SEED);
-                      setDistanceMultiplier(DEFAULT_DISTANCE_MULTIPLIER);
-                      setGaPopulationSize(DEFAULT_GA_POPULATION_SIZE);
-                      setGaGenerations(DEFAULT_GA_GENERATIONS);
-                      setGaMutationRate(DEFAULT_GA_MUTATION_RATE);
-                    }}
-                    className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
-                  >
-                    Reset Defaults (42 / 1.0 / 80 / 150 / 0.18)
-                  </button>
-                </div>
-              </div>
-            )}
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[11px] text-slate-600">
+            Fixed GA Config: Seed {DEFAULT_GRAPH_SEED} · Mult {DEFAULT_DISTANCE_MULTIPLIER} · Pop{' '}
+            {DEFAULT_GA_POPULATION_SIZE} · Gens {DEFAULT_GA_GENERATIONS} · Mut{' '}
+            {DEFAULT_GA_MUTATION_RATE}
           </div>
 
           <button
@@ -431,19 +516,20 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
         </form>
 
         <div className="space-y-6 lg:col-span-8">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-semibold text-slate-700">Map Visualization Mode:</span>
             <div className="inline-flex rounded-md border border-slate-200 bg-slate-100 p-0.5 text-xs">
               <button
                 type="button"
-                onClick={() => setMapViewMode('schematic')}
-                className={`rounded px-3 py-1 font-medium transition-colors ${
-                  mapViewMode === 'schematic'
+                onClick={() => setMapViewMode('google')}
+                className={`inline-flex items-center gap-1.5 rounded px-3 py-1 font-medium transition-colors ${
+                  mapViewMode === 'google'
                     ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Schematic Coordinate Plot
+                <Globe className="h-3 w-3" />
+                Karachi Google Maps
               </button>
               <button
                 type="button"
@@ -455,19 +541,50 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                 }`}
               >
                 <MapIcon className="h-3 w-3" />
-                Interactive Leaflet Map
+                Leaflet Map
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapViewMode('schematic')}
+                className={`rounded px-3 py-1 font-medium transition-colors ${
+                  mapViewMode === 'schematic'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Schematic Plot
               </button>
             </div>
           </div>
 
-          {mapViewMode === 'leaflet' ? (
+          {mapViewMode === 'google' ? (
+            <GoogleKarachiMap
+              points={mapPoints}
+              routeOrderIds={routeOrderIds}
+              encodedPolyline={activePolyline}
+              dataSource={dataSource}
+              height={400}
+              onSwitchToLeaflet={() => setMapViewMode('leaflet')}
+              title={
+                activeResult?.completed
+                  ? `Karachi Google Maps — ${activeAlgo} (${activeResult.estimatedDurationMinutes} min · ${activeResult.estimatedDistanceKm} km)`
+                  : 'Karachi Google Maps Route View'
+              }
+            />
+          ) : mapViewMode === 'leaflet' ? (
             <LeafletRouteMap
               points={mapPoints}
               routeOrderIds={routeOrderIds}
+              encodedPolyline={activePolyline}
+              provider={preview?.provider}
+              providerLabel={preview?.providerLabel || mapsStatus?.providerLabel}
+              isLiveTraffic={preview?.isLiveTraffic}
+              durationLabel={preview?.durationLabel}
+              dataSource={dataSource}
               height={400}
               title={
                 activeResult?.completed
-                  ? `Interactive Leaflet Route — ${activeAlgo} (${activeResult.estimatedDistanceKm} km simulated)`
+                  ? `Interactive Leaflet Route — ${activeAlgo} (${activeResult.estimatedDurationMinutes} min · ${activeResult.estimatedDistanceKm} km)`
                   : 'Interactive Leaflet Route Map'
               }
             />
@@ -478,7 +595,7 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
               height={400}
               title={
                 activeResult?.completed
-                  ? `Schematic Route Preview — ${activeAlgo} (${activeResult.estimatedDistanceKm} km simulated)`
+                  ? `Schematic Route Preview — ${activeAlgo} (${activeResult.estimatedDistanceKm} km)`
                   : 'Schematic Coordinate Preview'
               }
             />
@@ -489,10 +606,21 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="text-base font-semibold text-slate-900">
-                    Algorithm Comparison Matrix (Seed {preview.matrix.seed} · Multiplier {preview.matrix.distanceMultiplier}x)
+                    Algorithm Comparison Matrix ·{' '}
+                    <span className="text-blue-700">
+                      {activeObjective === 'FASTEST_TIME' ? 'Fastest Route (Time)' : 'Shortest Distance (km)'}
+                    </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Recommended: <span className="font-mono font-semibold text-emerald-700">{preview.recommendedAlgorithm}</span> · GA (Pop {preview.appliedConfig?.gaPopulationSize ?? gaPopulationSize}, Gens {preview.appliedConfig?.gaGenerations ?? gaGenerations}, Mut {preview.appliedConfig?.gaMutationRate ?? gaMutationRate}) · Click a row to preview its route
+                    Recommended:{' '}
+                    <span className="font-mono font-semibold text-emerald-700">
+                      {preview.recommendedAlgorithm}
+                    </span>{' '}
+                    · Provider:{' '}
+                    <span className="font-medium text-slate-700">
+                      {preview.providerLabel || preview.dataSource}
+                    </span>{' '}
+                    ({preview.isLiveTraffic ? 'Live Traffic' : 'Estimated Road Duration'}) · Click a row to preview its route
                   </p>
                 </div>
                 <button
@@ -511,10 +639,10 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                   <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
                     <tr>
                       <th className="px-3 py-2.5">Algorithm</th>
-                      <th className="px-3 py-2.5">Classification & Objective</th>
-                      <th className="px-3 py-2.5 text-right">Edges</th>
-                      <th className="px-3 py-2.5 text-right">Simulated Dist.</th>
-                      <th className="px-3 py-2.5 text-right">Sim. Travel</th>
+                      <th className="px-3 py-2.5">Objective &amp; Guarantee</th>
+                      <th className="px-3 py-2.5 text-right">Stops / Edges</th>
+                      <th className="px-3 py-2.5 text-right">Road Distance</th>
+                      <th className="px-3 py-2.5 text-right">Est. Travel Time</th>
                       <th className="px-3 py-2.5 text-right">Nodes Expanded</th>
                       <th className="px-3 py-2.5 text-right">Exec Time</th>
                     </tr>
@@ -522,10 +650,15 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                   <tbody className="divide-y divide-slate-100">
                     {preview.results.map((r) => {
                       const isSelected = activeAlgo === r.algorithm;
+                      const delayMin = r.trafficDelayMinutes ?? 0;
+                      const visitedStops = Math.max(
+                        0,
+                        r.routeOrder.filter((idx) => !preview.nodes[idx]?.isOffice).length
+                      );
                       return (
                         <tr
                           key={r.algorithm}
-                          onClick={() => r.completed && setActiveAlgo(r.algorithm)}
+                          onClick={() => void handleSelectAlgorithmRow(r)}
                           className={`cursor-pointer ${
                             isSelected ? 'bg-blue-50/70' : 'hover:bg-slate-50'
                           }`}
@@ -540,26 +673,43 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                           </td>
                           <td className="px-3 py-2.5 text-slate-600">
                             <span className="font-medium text-slate-800">
-                              {r.algorithm === 'A*'
-                                ? 'Informed (A* MST heuristic)'
-                                : r.algorithm === 'UCS'
-                                  ? 'Uninformed (cost-based)'
-                                  : r.algorithm === 'BFS'
-                                    ? 'Uninformed (minimizes edge count, NOT distance)'
-                                    : 'Evolutionary heuristic (non-optimal guarantee)'}
+                              {r.objectiveDescription}
                             </span>
                             {r.warning && (
                               <p className="mt-0.5 text-[11px] text-amber-700">{r.warning}</p>
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700">
-                            {r.completed ? r.edgeCount : '—'}
+                            {r.completed ? `${visitedStops} / ${r.edgeCount}` : '—'}
                           </td>
-                          <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums text-slate-900">
+                          <td
+                            className={`px-3 py-2.5 text-right font-mono tabular-nums ${
+                              activeObjective === 'SHORTEST_DISTANCE'
+                                ? 'font-bold text-slate-900'
+                                : 'text-slate-700'
+                            }`}
+                          >
                             {r.completed ? `${r.estimatedDistanceKm} km` : '—'}
                           </td>
-                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700">
-                            {r.completed ? `${r.estimatedDurationMinutes} min` : '—'}
+                          <td
+                            className={`px-3 py-2.5 text-right font-mono tabular-nums ${
+                              activeObjective === 'FASTEST_TIME'
+                                ? 'font-bold text-slate-900'
+                                : 'text-slate-700'
+                            }`}
+                          >
+                            {r.completed ? (
+                              <div>
+                                <span>{r.estimatedDurationMinutes} min</span>
+                                {delayMin > 0 && (
+                                  <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                                    +{delayMin}m traffic
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700">
                             {r.nodesExpanded.toLocaleString()}
@@ -590,7 +740,7 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
               {gaResult?.convergenceHistory && gaResult.convergenceHistory.length > 1 && (
                 <div className="border-t border-slate-100 pt-4">
                   <h4 className="text-xs font-semibold text-slate-800">
-                    Genetic Algorithm Convergence (Best Tour Distance by Generation)
+                    Genetic Algorithm Convergence (Best Tour {activeObjective === 'FASTEST_TIME' ? 'Travel Time' : 'Distance'} by Generation)
                   </h4>
                   <div className="mt-2 h-40 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -598,7 +748,7 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                         <XAxis dataKey="generation" tick={{ fontSize: 11, fill: '#475569' }} />
                         <YAxis tick={{ fontSize: 11, fill: '#475569' }} domain={['auto', 'auto']} />
-                        <Tooltip formatter={(val: unknown) => [`${val} km`, 'Best Cost']} />
+                        <Tooltip formatter={(val: unknown) => [`${val} ${unitLabel}`, 'Best Cost']} />
                         <Line type="monotone" dataKey="bestCost" stroke="#2563EB" strokeWidth={2} dot={false} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -606,7 +756,6 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                 </div>
               )}
 
-              {/* Bayesian Delay Risk Assessment for the Active Algorithm Tour */}
               {activeDelayPredictions.length > 0 && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">

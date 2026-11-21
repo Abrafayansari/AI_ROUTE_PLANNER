@@ -17,8 +17,16 @@ from app.models import (
     ScheduleEntry,
     VisitDelayPrediction,
 )
+from app.services.google_maps_service import (
+    OBJECTIVE_FASTEST_TIME,
+    OBJECTIVE_SHORTEST_DISTANCE,
+)
+from app.services.routing_service import (
+    build_cost_matrix_with_routing,
+    compute_route_geometry_with_routing,
+)
 from app.utils.metrics import (
-    build_local_cost_matrix,
+    OptimizationObjective,
     minutes_to_time,
     time_to_minutes,
 )
@@ -48,12 +56,22 @@ def _to_utc_dt(plan_date_str: str, hhmm: str) -> datetime:
     return datetime.fromisoformat(f"{plan_date_str}T{hhmm}:00+00:00").astimezone(timezone.utc)
 
 
+def _parse_iso_dt(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _build_nodes_and_matrix(
     office_id: str,
     distributor_ids: list[str],
     seed: int = DEFAULT_OPTIMIZER_SEED,
     distance_multiplier: float = DEFAULT_DISTANCE_MULTIPLIER,
-    travel_mode: str = "simulated_vehicle",
+    travel_mode: str = "DRIVE",
+    optimization_objective: OptimizationObjective = OBJECTIVE_FASTEST_TIME,
 ):
     office = db.session.get(OfficeLocation, office_id)
     if office is None:
@@ -87,22 +105,38 @@ def _build_nodes_and_matrix(
         for d in ordered_dists
     ]
 
-    matrix = build_local_cost_matrix(
+    matrix = build_cost_matrix_with_routing(
         nodes,
         seed=seed,
         distance_multiplier=distance_multiplier,
         travel_mode=travel_mode,  # type: ignore[arg-type]
+        optimization_objective=optimization_objective,
     )
     return office, ordered_dists, nodes, matrix
 
 
-def _select_recommended_run(runs: list[dict]) -> dict:
+def _select_recommended_run(
+    runs: list[dict],
+    optimization_objective: str = OBJECTIVE_FASTEST_TIME,
+) -> dict:
     completed = [r for r in runs if r.get("completed") and r.get("routeOrder")]
     if not completed:
         raise RuntimeError("No algorithm completed a valid route.")
+
+    if optimization_objective == OBJECTIVE_SHORTEST_DISTANCE:
+        return sorted(
+            completed,
+            key=lambda r: (
+                round(float(r["estimatedDistanceKm"]), 6),
+                round(float(r["estimatedDurationMinutes"]), 6),
+                PREFERENCE_ORDER.get(r["algorithm"], 9),
+            ),
+        )[0]
+
     return sorted(
         completed,
         key=lambda r: (
+            round(float(r["estimatedDurationMinutes"]), 6),
             round(float(r["estimatedDistanceKm"]), 6),
             PREFERENCE_ORDER.get(r["algorithm"], 9),
         ),
@@ -116,19 +150,21 @@ def generate_local_matrix(payload: dict) -> dict:
         if payload.get("distanceMultiplier") is not None
         else DEFAULT_DISTANCE_MULTIPLIER
     )
+    objective: OptimizationObjective = payload.get("optimizationObjective", OBJECTIVE_FASTEST_TIME)
     _, _, _, matrix = _build_nodes_and_matrix(
         office_id=payload["officeId"],
         distributor_ids=payload["distributorIds"],
         seed=seed,
         distance_multiplier=distance_multiplier,
-        travel_mode=payload.get("travelMode", "simulated_vehicle"),
+        travel_mode=payload.get("travelMode", "DRIVE"),
+        optimization_objective=objective,
+    )
+    disclaimer = (
+        f"Cost matrix provided by {matrix.providerLabel} — {matrix.durationLabel}."
     )
     return {
         **matrix.to_dict(),
-        "disclaimer": (
-            "Locally generated simulated distance matrix using Haversine coordinates "
-            "and deterministic multiplier. Not real road distances or live traffic."
-        ),
+        "disclaimer": disclaimer,
     }
 
 
@@ -184,7 +220,10 @@ def preview_optimization(payload: dict) -> dict:
         if payload.get("gaMutationRate") is not None
         else DEFAULT_GA_MUTATION_RATE
     )
-    travel_mode = payload.get("travelMode", "simulated_vehicle")
+    travel_mode = payload.get("travelMode", "DRIVE")
+    optimization_objective: OptimizationObjective = payload.get(
+        "optimizationObjective", OBJECTIVE_FASTEST_TIME
+    )
 
     _, _, nodes, matrix = _build_nodes_and_matrix(
         office_id=payload["officeId"],
@@ -192,12 +231,13 @@ def preview_optimization(payload: dict) -> dict:
         seed=seed,
         distance_multiplier=distance_multiplier,
         travel_mode=travel_mode,
+        optimization_objective=optimization_objective,
     )
 
     return_to_office = bool(payload.get("returnToOffice", True))
-    bfs = run_bfs(matrix, return_to_office)
-    ucs = run_ucs(matrix, return_to_office)
-    astar = run_astar(matrix, return_to_office)
+    bfs = run_bfs(matrix, return_to_office, optimization_objective=optimization_objective)
+    ucs = run_ucs(matrix, return_to_office, optimization_objective=optimization_objective)
+    astar = run_astar(matrix, return_to_office, optimization_objective=optimization_objective)
     ga = run_genetic_algorithm(
         matrix,
         return_to_office,
@@ -205,11 +245,14 @@ def preview_optimization(payload: dict) -> dict:
         population_size=ga_pop,
         generations=ga_gens,
         mutation_rate=ga_mut,
+        optimization_objective=optimization_objective,
     )
 
     all_runs = [bfs, ucs, astar, ga]
     completed = [r for r in all_runs if r.get("completed") and r.get("routeOrder")]
-    recommended = _select_recommended_run(completed) if completed else None
+    recommended = (
+        _select_recommended_run(completed, optimization_objective) if completed else None
+    )
 
     delay_predictions_by_algorithm: dict[str, list[dict]] = {}
     for r in completed:
@@ -223,22 +266,72 @@ def preview_optimization(payload: dict) -> dict:
         else []
     )
 
+    geometry_by_algorithm: dict[str, dict] = {}
+    encoded_polyline: str | None = None
+    if recommended and len(recommended["routeOrder"]) >= 2:
+        waypoints = [nodes[idx] for idx in recommended["routeOrder"]]
+        geom = compute_route_geometry_with_routing(
+            waypoints,
+            travel_mode=travel_mode,  # type: ignore[arg-type]
+            optimization_objective=optimization_objective,
+        )
+        geometry_by_algorithm[recommended["algorithm"]] = geom
+        encoded_polyline = geom.get("encodedPolyline")
+
     return {
         "nodes": nodes,
+        "optimizationObjective": optimization_objective,
+        "provider": matrix.provider,
+        "providerLabel": matrix.providerLabel,
+        "dataSource": matrix.dataSource,
+        "isLiveTraffic": matrix.isLiveTraffic,
+        "durationType": matrix.durationType,
+        "durationLabel": matrix.durationLabel,
+        "trafficCalculatedAt": matrix.trafficCalculatedAt,
+        "calculatedAt": matrix.calculatedAt,
+        "fallbackReason": matrix.fallbackReason,
+        "providerAttempts": matrix.providerAttempts,
+        "roadDistanceAvailable": matrix.roadDistanceAvailable,
+        "encodedPolyline": encoded_polyline,
+        "normalDurationMinutes": (
+            recommended.get("totalStaticDurationMinutes") if recommended else None
+        ),
+        "trafficDelayMinutes": (
+            recommended.get("trafficDelayMinutes") if recommended else None
+        ),
         "matrix": {
             "distanceKm": matrix.distanceKm,
             "durationMinutes": matrix.durationMinutes,
+            "staticDurationMinutes": matrix.staticDurationMinutes,
             "straightLineKm": matrix.straightLineKm,
             "cacheHit": matrix.cacheHit,
             "speedKmh": matrix.speedKmh,
             "seed": matrix.seed,
             "distanceMultiplier": matrix.distanceMultiplier,
             "travelMode": matrix.travelMode,
+            "optimizationObjective": matrix.optimizationObjective,
+            "provider": matrix.provider,
+            "providerLabel": matrix.providerLabel,
+            "dataSource": matrix.dataSource,
+            "isLiveTraffic": matrix.isLiveTraffic,
+            "durationType": matrix.durationType,
+            "durationLabel": matrix.durationLabel,
+            "trafficCalculatedAt": matrix.trafficCalculatedAt,
+            "calculatedAt": matrix.calculatedAt,
+            "fallbackReason": matrix.fallbackReason,
+            "roadDistanceAvailable": matrix.roadDistanceAvailable,
         },
         "appliedConfig": {
             "seed": seed,
             "distanceMultiplier": distance_multiplier,
             "travelMode": travel_mode,
+            "optimizationObjective": optimization_objective,
+            "provider": matrix.provider,
+            "providerLabel": matrix.providerLabel,
+            "dataSource": matrix.dataSource,
+            "isLiveTraffic": matrix.isLiveTraffic,
+            "durationType": matrix.durationType,
+            "durationLabel": matrix.durationLabel,
             "returnToOffice": return_to_office,
             "gaPopulationSize": ga_pop,
             "gaGenerations": ga_gens,
@@ -248,6 +341,7 @@ def preview_optimization(payload: dict) -> dict:
         "results": all_runs,
         "delayPredictions": preview_delay_predictions,
         "delayPredictionsByAlgorithm": delay_predictions_by_algorithm,
+        "geometryByAlgorithm": geometry_by_algorithm,
     }
 
 
@@ -320,12 +414,14 @@ def create_route_plan(payload: dict) -> dict:
         name=payload["name"],
         plan_date=date.fromisoformat(payload["planDate"]),
         office_id=str(office.id),
-        travel_mode=payload.get("travelMode", "simulated_vehicle"),
+        travel_mode=payload.get("travelMode", "DRIVE"),
+        optimization_objective=payload.get("optimizationObjective", OBJECTIVE_FASTEST_TIME),
         return_to_office=bool(payload.get("returnToOffice", True)),
         distance_multiplier=distance_multiplier,
         graph_seed=graph_seed,
         status="draft",
-        map_provider="simulated",
+        map_provider="pending",
+        data_source="osrm_osm",
         notes=payload.get("notes", ""),
     )
     db.session.add(plan)
@@ -341,6 +437,7 @@ def create_route_plan(payload: dict) -> dict:
             latitude=float(office.latitude),
             longitude=float(office.longitude),
             travel_from_previous_minutes=0,
+            static_travel_from_previous_minutes=0,
             distance_from_previous_km=0.0,
             visit_duration_minutes=0,
             status="pending",
@@ -392,11 +489,13 @@ def _write_stops_for_route(
 ) -> None:
     db.session.query(RouteStop).filter_by(route_plan_id=plan_id).delete()
     clock_min = time_to_minutes("09:00")
+    static_mat = matrix.staticDurationMinutes or matrix.durationMinutes
 
     for idx, node_idx in enumerate(route_order):
         prev_idx = route_order[idx - 1] if idx > 0 else node_idx
         leg_dist = matrix.distanceKm[prev_idx][node_idx] if idx > 0 else 0.0
         leg_dur = matrix.durationMinutes[prev_idx][node_idx] if idx > 0 else 0.0
+        leg_static_dur = static_mat[prev_idx][node_idx] if idx > 0 else 0.0
 
         clock_min += round(leg_dur)
         arr_str = minutes_to_time(clock_min)
@@ -428,6 +527,7 @@ def _write_stops_for_route(
                 estimated_arrival=_to_utc_dt(plan_date_str, arr_str),
                 estimated_departure=_to_utc_dt(plan_date_str, dep_str),
                 travel_from_previous_minutes=round(leg_dur),
+                static_travel_from_previous_minutes=round(leg_static_dur),
                 distance_from_previous_km=round(leg_dist, 3),
                 visit_duration_minutes=visit_dur,
                 status="pending",
@@ -440,7 +540,11 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
     if plan is None:
         raise FileNotFoundError("Route plan not found.")
 
-    plan_date_str = plan.plan_date.isoformat() if isinstance(plan.plan_date, date) else str(plan.plan_date)[:10]
+    plan_date_str = (
+        plan.plan_date.isoformat()
+        if isinstance(plan.plan_date, date)
+        else str(plan.plan_date)[:10]
+    )
 
     distributor_ids = payload.get("distributorIds")
     if not distributor_ids:
@@ -498,7 +602,12 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
         if payload.get("returnToOffice") is not None
         else plan.return_to_office
     )
-    travel_mode = payload.get("travelMode") or plan.travel_mode or "simulated_vehicle"
+    travel_mode = payload.get("travelMode") or plan.travel_mode or "DRIVE"
+    optimization_objective: OptimizationObjective = (
+        payload.get("optimizationObjective")
+        or plan.optimization_objective
+        or OBJECTIVE_FASTEST_TIME
+    )
 
     _, _, nodes, matrix = _build_nodes_and_matrix(
         office_id=str(plan.office_id),
@@ -506,11 +615,12 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
         seed=seed,
         distance_multiplier=distance_multiplier,
         travel_mode=travel_mode,
+        optimization_objective=optimization_objective,
     )
 
-    bfs = run_bfs(matrix, return_to_office)
-    ucs = run_ucs(matrix, return_to_office)
-    astar = run_astar(matrix, return_to_office)
+    bfs = run_bfs(matrix, return_to_office, optimization_objective=optimization_objective)
+    ucs = run_ucs(matrix, return_to_office, optimization_objective=optimization_objective)
+    astar = run_astar(matrix, return_to_office, optimization_objective=optimization_objective)
     ga = run_genetic_algorithm(
         matrix,
         return_to_office,
@@ -518,15 +628,27 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
         population_size=ga_pop,
         generations=ga_gens,
         mutation_rate=ga_mut,
+        optimization_objective=optimization_objective,
     )
 
     all_runs = [bfs, ucs, astar, ga]
-    recommended_run = _select_recommended_run(all_runs)
+    recommended_run = _select_recommended_run(all_runs, optimization_objective)
     chosen_name = payload.get("selectedAlgorithm") or recommended_run["algorithm"]
     chosen_run = next(
         (r for r in all_runs if r["algorithm"] == chosen_name and r.get("completed")),
         recommended_run,
     )
+
+    chosen_polyline: str | None = None
+    if len(chosen_run["routeOrder"]) >= 2:
+        geom = compute_route_geometry_with_routing(
+            [nodes[idx] for idx in chosen_run["routeOrder"]],
+            travel_mode=travel_mode,  # type: ignore[arg-type]
+            optimization_objective=optimization_objective,
+        )
+        chosen_polyline = geom.get("encodedPolyline")
+
+    traffic_dt = _parse_iso_dt(matrix.trafficCalculatedAt)
 
     db.session.query(AlgorithmRun).filter_by(route_plan_id=plan_id).delete()
     for r in all_runs:
@@ -544,6 +666,8 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
             "seed": seed,
             "distanceMultiplier": distance_multiplier,
             "travelMode": travel_mode,
+            "optimizationObjective": optimization_objective,
+            "dataSource": matrix.dataSource,
             "returnToOffice": return_to_office,
             **(ga["parameters"] if r["algorithm"] == "GENETIC_ALGORITHM" else {}),
         }
@@ -553,6 +677,8 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
             "objectiveDescription": r["objectiveDescription"],
             "edgeCount": r["edgeCount"],
             "isOptimalForObjective": bool(r["isOptimalForObjective"]),
+            "totalStaticDurationMinutes": r.get("totalStaticDurationMinutes"),
+            "trafficDelayMinutes": r.get("trafficDelayMinutes"),
             **(
                 {
                     "generationsRun": ga["generationsRun"],
@@ -567,6 +693,10 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
             AlgorithmRun(
                 route_plan_id=plan_id,
                 algorithm_name=r["algorithm"],
+                optimization_objective=optimization_objective,
+                data_source=matrix.dataSource,
+                traffic_calculated_at=traffic_dt,
+                encoded_polyline=chosen_polyline if r["algorithm"] == chosen_run["algorithm"] else None,
                 status="completed" if r["completed"] else "failed",
                 route_order=route_uuids,
                 route_names=route_names,
@@ -592,29 +722,57 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
 
     plan.recommended_algorithm = recommended_run["algorithm"]
     plan.selected_algorithm = chosen_run["algorithm"]
+    plan.optimization_objective = optimization_objective
     plan.total_distance_km = chosen_run["estimatedDistanceKm"]
     plan.total_duration_minutes = round(chosen_run["estimatedDurationMinutes"])
+    plan.normal_duration_minutes = round(chosen_run.get("totalStaticDurationMinutes", chosen_run["estimatedDurationMinutes"]))
+    plan.traffic_delay_minutes = round(chosen_run.get("trafficDelayMinutes", 0.0))
     plan.distance_multiplier = distance_multiplier
     plan.graph_seed = seed
     plan.return_to_office = return_to_office
     plan.travel_mode = travel_mode
+    plan.data_source = matrix.dataSource
+    plan.traffic_calculated_at = traffic_dt
+    plan.encoded_polyline = chosen_polyline
+    plan.map_provider = matrix.provider
     plan.status = "optimized"
     plan.updated_at = datetime.now(timezone.utc)
 
-    # Evaluate and persist Bayesian delay predictions for the optimized route
     from app.services.prediction_service import predict_route_plan_delays
+
     delay_results = predict_route_plan_delays(plan_id, save_to_db=True)
 
     return {
         "routePlanId": plan_id,
         "recommendedAlgorithm": recommended_run["algorithm"],
         "selectedAlgorithm": chosen_run["algorithm"],
+        "optimizationObjective": optimization_objective,
+        "provider": matrix.provider,
+        "providerLabel": matrix.providerLabel,
+        "dataSource": matrix.dataSource,
+        "isLiveTraffic": matrix.isLiveTraffic,
+        "durationType": matrix.durationType,
+        "durationLabel": matrix.durationLabel,
+        "trafficCalculatedAt": matrix.trafficCalculatedAt,
+        "calculatedAt": matrix.calculatedAt,
+        "fallbackReason": matrix.fallbackReason,
+        "providerAttempts": matrix.providerAttempts,
+        "encodedPolyline": chosen_polyline,
+        "normalDurationMinutes": plan.normal_duration_minutes,
+        "trafficDelayMinutes": plan.traffic_delay_minutes,
         "matrixCacheHit": matrix.cacheHit,
         "speedKmh": matrix.speedKmh,
         "appliedConfig": {
             "seed": seed,
             "distanceMultiplier": distance_multiplier,
             "travelMode": travel_mode,
+            "optimizationObjective": optimization_objective,
+            "provider": matrix.provider,
+            "providerLabel": matrix.providerLabel,
+            "dataSource": matrix.dataSource,
+            "isLiveTraffic": matrix.isLiveTraffic,
+            "durationType": matrix.durationType,
+            "durationLabel": matrix.durationLabel,
             "returnToOffice": return_to_office,
             "gaPopulationSize": ga_pop,
             "gaGenerations": ga_gens,
@@ -638,10 +796,15 @@ def get_route_plan_detail(plan_id: str) -> dict:
         .order_by(RouteStop.stop_order.asc())
         .all()
     )
+    sort_col = (
+        AlgorithmRun.total_distance_km.asc().nullslast()
+        if plan.optimization_objective == OBJECTIVE_SHORTEST_DISTANCE
+        else AlgorithmRun.estimated_duration_minutes.asc().nullslast()
+    )
     algos = (
         db.session.query(AlgorithmRun)
         .filter_by(route_plan_id=plan_id)
-        .order_by(AlgorithmRun.total_distance_km.asc().nullslast())
+        .order_by(sort_col)
         .all()
     )
     schedules = (
@@ -681,6 +844,27 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
     if plan is None:
         raise FileNotFoundError("Route plan not found.")
 
+    if payload.get("name") is not None:
+        plan.name = payload["name"]
+    if payload.get("planDate") is not None:
+        plan.plan_date = date.fromisoformat(payload["planDate"])
+    if payload.get("status") is not None:
+        plan.status = payload["status"]
+    if payload.get("notes") is not None:
+        plan.notes = payload["notes"]
+
+    requested_objective = payload.get("optimizationObjective")
+    if requested_objective and requested_objective != plan.optimization_objective:
+        db.session.flush()
+        optimize_route_plan(
+            plan_id,
+            {
+                "optimizationObjective": requested_objective,
+                "selectedAlgorithm": payload.get("selectedAlgorithm"),
+            },
+        )
+        return plan.to_dict()
+
     plan_date_str = (
         plan.plan_date.isoformat()
         if isinstance(plan.plan_date, date)
@@ -703,6 +887,9 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
                     n["id"] for n in ordered_nodes if not n.get("isOffice")
                 )
             )
+            objective: OptimizationObjective = (
+                plan.optimization_objective or OBJECTIVE_FASTEST_TIME  # type: ignore[assignment]
+            )
             office, unique_dists, graph_nodes, matrix = _build_nodes_and_matrix(
                 office_id=str(plan.office_id),
                 distributor_ids=dist_ids,
@@ -712,7 +899,8 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
                     if plan.distance_multiplier is not None
                     else DEFAULT_DISTANCE_MULTIPLIER
                 ),
-                travel_mode=plan.travel_mode or "simulated_vehicle",
+                travel_mode=plan.travel_mode or "DRIVE",
+                optimization_objective=objective,
             )
             node_idx_by_id = {n["id"]: idx for idx, n in enumerate(graph_nodes)}
             route_order = [
@@ -727,24 +915,32 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
                 matrix=matrix,
                 return_to_office=bool(plan.return_to_office),
             )
+            if len(route_order) >= 2:
+                geom = compute_route_geometry_with_routing(
+                    [graph_nodes[idx] for idx in route_order],
+                    travel_mode=plan.travel_mode or "DRIVE",  # type: ignore[arg-type]
+                    optimization_objective=objective,
+                )
+                plan.encoded_polyline = geom.get("encodedPolyline")
+            plan.data_source = matrix.dataSource
+            plan.map_provider = matrix.provider
+            plan.traffic_calculated_at = _parse_iso_dt(matrix.trafficCalculatedAt)
+
             plan.total_distance_km = float(algo_row.total_distance_km or 0.0)
             plan.total_duration_minutes = int(algo_row.estimated_duration_minutes or 0)
+            details = algo_row.result_details or {}
+            if details.get("totalStaticDurationMinutes") is not None:
+                plan.normal_duration_minutes = round(float(details["totalStaticDurationMinutes"]))
+            if details.get("trafficDelayMinutes") is not None:
+                plan.traffic_delay_minutes = round(float(details["trafficDelayMinutes"]))
             plan.selected_algorithm = payload["selectedAlgorithm"]
             switched_algorithm = True
-
-    if payload.get("name") is not None:
-        plan.name = payload["name"]
-    if payload.get("planDate") is not None:
-        plan.plan_date = date.fromisoformat(payload["planDate"])
-    if payload.get("status") is not None:
-        plan.status = payload["status"]
-    if payload.get("notes") is not None:
-        plan.notes = payload["notes"]
 
     plan.updated_at = datetime.now(timezone.utc)
     if switched_algorithm:
         db.session.flush()
         from app.services.prediction_service import predict_route_plan_delays
+
         predict_route_plan_delays(plan_id, save_to_db=True)
     else:
         db.session.commit()
@@ -835,17 +1031,10 @@ def get_analytics_summary() -> dict:
     avg_distance_km = round(float(avg_dist_val), 2) if avg_dist_val is not None else None
     avg_duration_minutes = round(float(avg_dur_val), 1) if avg_dur_val is not None else None
 
-    latest_plan_obj = (
-        plan_base.order_by(RoutePlan.created_at.desc()).first()
-    )
+    latest_plan_obj = plan_base.order_by(RoutePlan.created_at.desc()).first()
     latest_plan = latest_plan_obj.to_dict() if latest_plan_obj else None
 
-    # Use Pandas for clean aggregation over completed algorithm runs
-    completed_runs = (
-        db.session.query(AlgorithmRun)
-        .filter_by(status="completed")
-        .all()
-    )
+    completed_runs = db.session.query(AlgorithmRun).filter_by(status="completed").all()
 
     algorithm_averages: list[dict] = []
     if completed_runs:
@@ -961,7 +1150,7 @@ def get_analytics_summary() -> dict:
         best_dist = min(algorithm_averages, key=lambda a: a["avgDistanceKm"])
         total_algo_runs = sum(a["runCount"] for a in algorithm_averages)
         insights.append(
-            f"Across {total_algo_runs} saved algorithm runs, {best_dist['algorithmName']} achieved the lowest average simulated route distance ({best_dist['avgDistanceKm']} km)."
+            f"Across {total_algo_runs} saved algorithm runs, {best_dist['algorithmName']} achieved the lowest average route distance ({best_dist['avgDistanceKm']} km)."
         )
         astar = next((a for a in algorithm_averages if a["algorithmName"] == "A*"), None)
         ucs = next((a for a in algorithm_averages if a["algorithmName"] == "UCS"), None)
@@ -977,7 +1166,7 @@ def get_analytics_summary() -> dict:
             )
         if bfs and bfs["avgDistanceKm"] > best_dist["avgDistanceKm"]:
             insights.append(
-                f"Unweighted BFS averaged {bfs['avgDistanceKm']} km because BFS minimizes edge/hop count rather than simulated travel distance."
+                f"Unweighted BFS averaged {bfs['avgDistanceKm']} km because BFS minimizes edge/hop count rather than travel time or road distance."
             )
     else:
         insights.append(

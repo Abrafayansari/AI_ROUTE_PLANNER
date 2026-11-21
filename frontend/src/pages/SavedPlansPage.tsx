@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, CheckCircle2, Map as MapIcon, RefreshCw, ShieldAlert, SkipForward, Trash2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Globe, Map as MapIcon, RefreshCw, Route, ShieldAlert, SkipForward, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { SchematicMap, type SchematicPoint } from '../components/SchematicMap';
 import { LeafletRouteMap } from '../components/LeafletRouteMap';
-import type { PaginationMeta, RoutePlanDetailPayload, RoutePlanSummary } from '../types';
+import { GoogleKarachiMap } from '../components/GoogleKarachiMap';
+import type {
+  AlgorithmName,
+  OptimizationObjective,
+  PaginationMeta,
+  RoutePlanDetailPayload,
+  RoutePlanSummary,
+} from '../types';
 
 interface SavedPlansPageProps {
   onNotify: (kind: 'success' | 'error', text: string) => void;
@@ -14,6 +21,7 @@ interface SavedPlansPageProps {
 export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
   const { planId: selectedPlanId = null } = useParams<{ planId?: string }>();
   const navigate = useNavigate();
+  const hasGoogleBrowserKey = Boolean((import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim());
 
   const [plans, setPlans] = useState<RoutePlanSummary[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta>({
@@ -29,7 +37,10 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<RoutePlanSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [mapViewMode, setMapViewMode] = useState<'schematic' | 'leaflet'>('leaflet');
+  const [switchingObjective, setSwitchingObjective] = useState(false);
+  const [mapViewMode, setMapViewMode] = useState<'google' | 'leaflet' | 'schematic'>(
+    hasGoogleBrowserKey ? 'google' : 'leaflet'
+  );
   const [evaluatingDelays, setEvaluatingDelays] = useState(false);
 
   const loadPlans = async (targetPage = page) => {
@@ -81,7 +92,7 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
     }
   };
 
-  const handleSwitchAlgorithm = async (algo: 'BFS' | 'UCS' | 'A*' | 'GENETIC_ALGORITHM') => {
+  const handleSwitchAlgorithm = async (algo: AlgorithmName) => {
     if (!selectedPlanId) return;
     try {
       await api.updateRoutePlan(selectedPlanId, { selectedAlgorithm: algo });
@@ -90,6 +101,24 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
       await loadPlans(page);
     } catch (err) {
       onNotify('error', err instanceof Error ? err.message : 'Failed to switch algorithm');
+    }
+  };
+
+  const handleSwitchObjective = async (nextObjective: OptimizationObjective) => {
+    if (!selectedPlanId || !detail || detail.plan.optimization_objective === nextObjective) return;
+    setSwitchingObjective(true);
+    try {
+      await api.updateRoutePlan(selectedPlanId, { optimizationObjective: nextObjective });
+      onNotify(
+        'success',
+        `Re-optimized route plan for ${nextObjective === 'FASTEST_TIME' ? 'Fastest Time' : 'Shortest Distance'}.`
+      );
+      await loadDetail(selectedPlanId);
+      await loadPlans(page);
+    } catch (err) {
+      onNotify('error', err instanceof Error ? err.message : 'Failed to switch optimization objective');
+    } finally {
+      setSwitchingObjective(false);
     }
   };
 
@@ -131,6 +160,22 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
     }
 
     const { plan, stops, algorithms } = detail;
+    const planObjective: OptimizationObjective = plan.optimization_objective || 'FASTEST_TIME';
+    const planDataSource = plan.data_source || 'osrm_osm';
+    const planProviderLabel =
+      plan.provider_label ||
+      (planDataSource === 'osrm_osm'
+        ? 'OSRM / OpenStreetMap'
+        : planDataSource === 'openrouteservice'
+          ? 'OpenRouteService'
+          : planDataSource.startsWith('google_')
+            ? 'Google Maps'
+            : planDataSource);
+    const planDurationLabel =
+      plan.duration_label ||
+      (plan.is_live_traffic || planDataSource === 'google_live_traffic'
+        ? 'Live traffic travel duration'
+        : 'Estimated road travel duration (no live traffic)');
 
     const pointMap = new Map<string, SchematicPoint>();
     if (plan.office_latitude !== undefined && plan.office_longitude !== undefined) {
@@ -177,19 +222,52 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
                 <span className="font-mono font-semibold text-slate-800">
                   {plan.selected_algorithm || 'Draft'}
                 </span>{' '}
-                · Status: {plan.status}
+                · Provider: <span className="font-medium text-slate-700">{planProviderLabel}</span> · Status: {plan.status}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-6 font-mono text-xs tabular-nums">
+          <div className="flex flex-wrap items-center gap-5 font-mono text-xs tabular-nums">
             <div>
-              <span className="text-slate-500">Sim. Distance: </span>
+              <span className="text-slate-500">Distance: </span>
               <span className="font-semibold text-slate-900">{plan.total_distance_km} km</span>
             </div>
             <div>
-              <span className="text-slate-500">Sim. Travel: </span>
+              <span className="text-slate-500">Travel Time: </span>
               <span className="font-semibold text-slate-900">{plan.total_duration_minutes} min</span>
+              {(plan.traffic_delay_minutes ?? 0) > 0 && (
+                <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                  +{plan.traffic_delay_minutes}m traffic
+                </span>
+              )}
+            </div>
+            <div className="inline-flex rounded-md border border-slate-200 bg-slate-100 p-0.5 font-sans">
+              <button
+                type="button"
+                disabled={switchingObjective}
+                onClick={() => void handleSwitchObjective('FASTEST_TIME')}
+                className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-[11px] font-medium ${
+                  planObjective === 'FASTEST_TIME'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Clock className="h-3 w-3" />
+                Fastest Time
+              </button>
+              <button
+                type="button"
+                disabled={switchingObjective}
+                onClick={() => void handleSwitchObjective('SHORTEST_DISTANCE')}
+                className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-[11px] font-medium ${
+                  planObjective === 'SHORTEST_DISTANCE'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Route className="h-3 w-3" />
+                Shortest Dist
+              </button>
             </div>
           </div>
         </div>
@@ -198,14 +276,15 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
           <div className="inline-flex rounded-md border border-slate-200 bg-slate-100 p-0.5 text-xs">
             <button
               type="button"
-              onClick={() => setMapViewMode('schematic')}
-              className={`rounded px-3 py-1 font-medium transition-colors ${
-                mapViewMode === 'schematic'
+              onClick={() => setMapViewMode('google')}
+              className={`inline-flex items-center gap-1.5 rounded px-3 py-1 font-medium transition-colors ${
+                mapViewMode === 'google'
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Schematic Coordinate Plot
+              <Globe className="h-3 w-3" />
+              Karachi Google Maps
             </button>
             <button
               type="button"
@@ -217,7 +296,18 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
               }`}
             >
               <MapIcon className="h-3 w-3" />
-              Interactive Leaflet Map
+              Leaflet Map
+            </button>
+            <button
+              type="button"
+              onClick={() => setMapViewMode('schematic')}
+              className={`rounded px-3 py-1 font-medium transition-colors ${
+                mapViewMode === 'schematic'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Schematic Plot
             </button>
           </div>
 
@@ -232,19 +322,34 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
           </button>
         </div>
 
-        {mapViewMode === 'leaflet' ? (
+        {mapViewMode === 'google' ? (
+          <GoogleKarachiMap
+            points={Array.from(pointMap.values())}
+            routeOrderIds={routeOrderIds}
+            encodedPolyline={plan.encoded_polyline}
+            dataSource={planDataSource}
+            height={380}
+            onSwitchToLeaflet={() => setMapViewMode('leaflet')}
+            title={`Saved Route (Google Maps) · ${plan.selected_algorithm || 'Draft'} (${plan.total_duration_minutes} min · ${plan.total_distance_km} km)`}
+          />
+        ) : mapViewMode === 'leaflet' ? (
           <LeafletRouteMap
             points={Array.from(pointMap.values())}
             routeOrderIds={routeOrderIds}
+            encodedPolyline={plan.encoded_polyline}
+            providerLabel={planProviderLabel}
+            isLiveTraffic={Boolean(plan.is_live_traffic || planDataSource === 'google_live_traffic')}
+            durationLabel={planDurationLabel}
+            dataSource={planDataSource}
             height={380}
-            title={`Saved Route (Leaflet Map) · ${plan.selected_algorithm || 'Draft'} (${plan.total_distance_km} km simulated)`}
+            title={`Saved Route (Leaflet Map) · ${plan.selected_algorithm || 'Draft'} (${plan.total_duration_minutes} min · ${plan.total_distance_km} km)`}
           />
         ) : (
           <SchematicMap
             points={Array.from(pointMap.values())}
             routeOrderIds={routeOrderIds}
             height={380}
-            title={`Saved Route Schematic · ${plan.selected_algorithm || 'Draft'} (${plan.total_distance_km} km simulated)`}
+            title={`Saved Route Schematic · ${plan.selected_algorithm || 'Draft'} (${plan.total_distance_km} km)`}
           />
         )}
 
@@ -281,7 +386,9 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3.5">
             <h3 className="text-base font-semibold text-slate-900">Ordered Route Stops</h3>
             <span className="text-xs text-slate-500">
-              Leg distances and arrival times are simulated estimates from local Haversine graph
+              {planProviderLabel} · {planDurationLabel}
+              {plan.traffic_calculated_at &&
+                ` · Calculated ${new Date(plan.traffic_calculated_at).toLocaleString()}`}
             </span>
           </div>
           <div className="overflow-x-auto">
@@ -290,8 +397,8 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
                 <tr>
                   <th className="px-4 py-2.5">#</th>
                   <th className="px-4 py-2.5">Location</th>
-                  <th className="px-4 py-2.5 text-right">Leg Sim. Dist.</th>
-                  <th className="px-4 py-2.5 text-right">Leg Sim. Time</th>
+                  <th className="px-4 py-2.5 text-right">Leg Dist.</th>
+                  <th className="px-4 py-2.5 text-right">Leg Travel</th>
                   <th className="px-4 py-2.5 text-right">Est. Arrival / Dep.</th>
                   <th className="px-4 py-2.5 text-center">Delay Risk (BN)</th>
                   <th className="px-4 py-2.5">Status</th>
@@ -417,7 +524,8 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
                   <tr>
                     <th className="px-3 py-2">Algorithm</th>
                     <th className="px-3 py-2">Objective</th>
-                    <th className="px-3 py-2 text-right">Sim. Distance</th>
+                    <th className="px-3 py-2 text-right">Distance</th>
+                    <th className="px-3 py-2 text-right">Travel Time</th>
                     <th className="px-3 py-2 text-right">Nodes Expanded</th>
                     <th className="px-3 py-2 text-right">Exec Time</th>
                     <th className="px-3 py-2 text-right">Apply</th>
@@ -437,6 +545,9 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
                       </td>
                       <td className="px-3 py-2 text-right font-mono tabular-nums text-slate-900">
                         {a.total_distance_km ?? 0} km
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums text-slate-900">
+                        {a.estimated_duration_minutes ?? 0} min
                       </td>
                       <td className="px-3 py-2 text-right font-mono tabular-nums text-slate-700">
                         {(a.nodes_expanded ?? 0).toLocaleString()}
@@ -515,9 +626,10 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
                   <tr>
                     <th className="px-5 py-3">Plan Name</th>
                     <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Algorithm</th>
+                    <th className="px-4 py-3">Algorithm &amp; Objective</th>
                     <th className="px-4 py-3 text-right">Stops Done</th>
-                    <th className="px-4 py-3 text-right">Sim. Distance</th>
+                    <th className="px-4 py-3 text-right">Distance</th>
+                    <th className="px-4 py-3 text-right">Travel</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-5 py-3 text-right">Actions</th>
                   </tr>
@@ -538,14 +650,22 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
                       <td className="px-4 py-3 font-mono text-xs tabular-nums text-slate-700">
                         {String(p.plan_date).slice(0, 10)}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs font-semibold text-slate-800">
-                        {p.selected_algorithm || 'Draft'}
+                      <td className="px-4 py-3 font-mono text-xs text-slate-800">
+                        <span className="font-semibold">{p.selected_algorithm || 'Draft'}</span>
+                        <div className="text-[11px] font-sans text-slate-500">
+                          {p.optimization_objective === 'SHORTEST_DISTANCE'
+                            ? 'Shortest Distance'
+                            : 'Fastest Time'}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-700">
                         {p.visited_count ?? 0} / {p.stop_count ?? 0}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-900">
                         {p.total_distance_km} km
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-700">
+                        {p.total_duration_minutes} min
                       </td>
                       <td className="px-4 py-3 text-xs font-medium text-slate-700">{p.status}</td>
                       <td className="px-5 py-3 text-right">

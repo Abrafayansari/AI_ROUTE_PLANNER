@@ -6,15 +6,20 @@ import type {
   BayesianPrediction,
   CptRow,
   CspRunResult,
+  DataSourceType,
   Distributor,
   HealthPayload,
   KMeansRunResult,
+  MapsStatusPayload,
   OfficeLocation,
+  OptimizationObjective,
   OptimizePreviewResponse,
   PaginationMeta,
   RouteDelayResponse,
+  RouteGeometryPayload,
   RoutePlanDetailPayload,
   RoutePlanSummary,
+  TravelMode,
 } from '../types';
 
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -151,6 +156,9 @@ export const api = {
     lunchStartTime: string;
     lunchDurationMinutes: number;
     maxVisitsPerDay: number;
+    travelMode?: TravelMode;
+    optimizationObjective?: OptimizationObjective;
+    useRoadTravelTimes?: boolean;
     routePlanId?: string | null;
   }) => request<CspRunResult>({ url: '/api/schedules/run', method: 'POST', data: body }),
   getLatestSchedule: () =>
@@ -159,6 +167,12 @@ export const api = {
       officeId?: string | null;
       officeName?: string | null;
       scheduleDate: string;
+      provider?: import('../types').RoutingProvider;
+      providerLabel?: string;
+      dataSource?: DataSourceType;
+      isLiveTraffic?: boolean;
+      durationType?: 'live_traffic' | 'estimated_road_duration' | 'simulated';
+      durationLabel?: string;
       bayesianAdvisory?: CspRunResult['bayesianAdvisory'];
       entries: Array<{
         id: string;
@@ -172,7 +186,9 @@ export const api = {
         closing_time: string;
         schedule_date: string;
         constraint_notes: string;
+        travel_from_previous_minutes?: number | null;
         distanceKm?: number;
+        dataSource?: DataSourceType;
         delayRisk?: 'Low' | 'Medium' | 'High';
         delayProbabilities?: { Low: number; Medium: number; High: number };
         recommendedBufferMinutes?: number;
@@ -185,12 +201,20 @@ export const api = {
     distributorIds: string[];
     seed: number;
     distanceMultiplier: number;
-    travelMode: 'simulated_vehicle' | 'simulated_walking' | 'simulated_van';
+    travelMode: TravelMode;
+    optimizationObjective?: OptimizationObjective;
     returnToOffice: boolean;
     gaPopulationSize: number;
     gaGenerations: number;
     gaMutationRate: number;
   }) => request<OptimizePreviewResponse>({ url: '/api/optimize/preview', method: 'POST', data: body }),
+
+  getMapsStatus: () => request<MapsStatusPayload>({ url: '/api/maps/status', method: 'GET' }),
+  computeRouteGeometry: (body: {
+    waypoints: Array<{ latitude: number; longitude: number }>;
+    travelMode?: TravelMode;
+    optimizationObjective?: OptimizationObjective;
+  }) => request<RouteGeometryPayload>({ url: '/api/maps/route-geometry', method: 'POST', data: body }),
 
   getRoutePlans: (page = 1, pageSize = 20) =>
     request<{ items: RoutePlanSummary[]; pagination: PaginationMeta }>({
@@ -203,7 +227,8 @@ export const api = {
     planDate: string;
     officeId: string;
     distributorIds: string[];
-    travelMode: 'simulated_vehicle' | 'simulated_walking' | 'simulated_van';
+    travelMode: TravelMode;
+    optimizationObjective?: OptimizationObjective;
     returnToOffice: boolean;
     distanceMultiplier: number;
     graphSeed: number;

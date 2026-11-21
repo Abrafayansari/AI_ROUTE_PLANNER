@@ -58,6 +58,7 @@ class RouteStop(db.Model):
     estimated_arrival = db.Column(db.DateTime(timezone=True), nullable=True)
     estimated_departure = db.Column(db.DateTime(timezone=True), nullable=True)
     travel_from_previous_minutes = db.Column(db.Integer, nullable=True)
+    static_travel_from_previous_minutes = db.Column(db.Integer, nullable=True)
     distance_from_previous_km = db.Column(db.Float, nullable=True)
     visit_duration_minutes = db.Column(db.Integer, nullable=False, default=0)
     status = db.Column(db.String(20), nullable=False, default="pending")
@@ -87,6 +88,11 @@ class RouteStop(db.Model):
             "travel_from_previous_minutes": (
                 int(self.travel_from_previous_minutes)
                 if self.travel_from_previous_minutes is not None
+                else None
+            ),
+            "static_travel_from_previous_minutes": (
+                int(self.static_travel_from_previous_minutes)
+                if self.static_travel_from_previous_minutes is not None
                 else None
             ),
             "distance_from_previous_km": (
