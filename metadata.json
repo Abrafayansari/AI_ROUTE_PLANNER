@@ -1,0 +1,6 @@
+{
+  "name": "Smart Route Planner for Sales Field Officers",
+  "description": "AI-assisted route optimization, K-Means geographic clustering, CSP visit scheduling, and search algorithm comparison workspace for sales field operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
