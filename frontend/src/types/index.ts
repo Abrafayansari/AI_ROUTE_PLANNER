@@ -12,6 +12,12 @@ export interface ApiResponse<T> {
 export interface DatabaseHealth {
   configured: boolean;
   connected: boolean;
+  dialect?: string | null;
+  activeDatabase?: string;
+  neonReachable?: boolean;
+  neonTablesVerified?: boolean;
+  fallbackActive?: boolean;
+  fallbackReason?: string | null;
   schemaReady: boolean;
   missingTables: string[];
   existingTables: string[];

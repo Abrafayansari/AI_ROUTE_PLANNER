@@ -105,7 +105,12 @@ def post_route_plan():
 
     try:
         data = create_route_plan(parsed.model_dump())
-        return ok(data, "Route plan created in Neon PostgreSQL.", 201)
+        db_label = (
+            "Neon PostgreSQL"
+            if db.engine.dialect.name == "postgresql"
+            else "local SQLite"
+        )
+        return ok(data, f"Route plan created in {db_label}.", 201)
     except FileNotFoundError as exc:
         db.session.rollback()
         return fail(404, "NOT_FOUND", str(exc))

@@ -5,8 +5,19 @@ import http from 'node:http';
 import path from 'node:path';
 import express, { type Request, type Response } from 'express';
 
+function resolveFlaskPort(): number {
+  const raw = Number(process.env.FLASK_PORT);
+  if (Number.isInteger(raw) && raw >= 1 && raw <= 65535 && raw !== 3000 && raw !== 8080) {
+    return raw;
+  }
+  if (process.env.FLASK_PORT) {
+    console.warn(`[setup] Ignoring invalid FLASK_PORT="${process.env.FLASK_PORT}"; defaulting to 5000.`);
+  }
+  return 5000;
+}
+
 const FLASK_HOST = '127.0.0.1';
-const FLASK_PORT = Number(process.env.FLASK_PORT) || 5000;
+const FLASK_PORT = resolveFlaskPort();
 
 type BackendState = 'bootstrapping' | 'starting' | 'ready' | 'error';
 
@@ -196,7 +207,12 @@ function proxyToFlask(req: Request, res: Response): void {
       headers,
     },
     (proxyRes) => {
-      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      const upstreamStatus = proxyRes.statusCode || 502;
+      const outStatus =
+        req.originalUrl.startsWith('/api/health') && upstreamStatus === 503
+          ? 200
+          : upstreamStatus;
+      res.writeHead(outStatus, proxyRes.headers);
       proxyRes.pipe(res, { end: true });
     }
   );
@@ -219,6 +235,30 @@ function proxyToFlask(req: Request, res: Response): void {
   req.pipe(proxyReq, { end: true });
 }
 
+function resolveExpressPort(): number {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--port' && args[i + 1]) {
+      const parsed = Number(args[i + 1]);
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    } else if (arg.startsWith('--port=')) {
+      const parsed = Number(arg.slice('--port='.length));
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    }
+  }
+  const defaultAppPort = Number(process.env.DEFAULT_APP_PORT);
+  if (Number.isInteger(defaultAppPort) && defaultAppPort > 0) {
+    return defaultAppPort;
+  }
+  const envPort = Number(process.env.PORT);
+  const nginxPort = Number(process.env.NGINX_PORT);
+  if (Number.isInteger(envPort) && envPort > 0 && envPort !== nginxPort && envPort !== 8080) {
+    return envPort;
+  }
+  return 3000;
+}
+
 async function startServer(): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -226,9 +266,11 @@ async function startServer(): Promise<void> {
     await ensureFrontendDependencies();
   }
 
-  let fatalBootError: unknown = null;
   const backendBootPromise = bootFlaskSupervisor().catch((err) => {
-    fatalBootError = err;
+    console.error(
+      'Backend boot error:',
+      err instanceof Error ? err.message : 'Unknown error'
+    );
   });
 
   const shutdown = () => {
@@ -245,22 +287,27 @@ async function startServer(): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Wait up to 25s so warm and typical boots have Flask ready before port 3000 opens,
-  // avoiding initial 503 race errors on /api/health while bounded on cold-start installs.
-  await Promise.race([
-    backendBootPromise,
-    new Promise<void>((resolve) => setTimeout(resolve, 25000)),
-  ]);
-
-  if (fatalBootError) {
-    throw fatalBootError;
-  }
-
   const app = express();
-  const port = Number(process.env.PORT) || 3000;
+  const port = resolveExpressPort();
 
-  // Forward all /api requests directly to Python Flask backend
-  app.use('/api', (req, res) => {
+  // Forward all /api requests directly to Python Flask backend, waiting briefly if still booting
+  app.use('/api', async (req, res) => {
+    if (backendState === 'bootstrapping' || backendState === 'starting') {
+      await Promise.race([
+        backendBootPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 15000)),
+      ]);
+    }
+    if (backendState === 'error') {
+      res.status(503).json({
+        success: false,
+        error: {
+          code: 'BACKEND_UNAVAILABLE',
+          message: backendStatusMessage,
+        },
+      });
+      return;
+    }
     proxyToFlask(req, res);
   });
 
@@ -282,8 +329,12 @@ async function startServer(): Promise<void> {
     });
   }
 
-  app.listen(port, '0.0.0.0', () => {
+  const server = app.listen(port, '0.0.0.0', () => {
     console.log(`Smart Route Planner frontend+proxy listening on http://0.0.0.0:${port}`);
+  });
+  server.on('error', (err) => {
+    console.error('Express server error:', err instanceof Error ? err.message : String(err));
+    shutdown();
   });
 }
 

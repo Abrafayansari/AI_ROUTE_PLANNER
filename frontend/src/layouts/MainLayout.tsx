@@ -161,18 +161,24 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             >
               <Database
                 className={`h-3.5 w-3.5 ${
-                  dbHealth?.connected && dbHealth?.schemaReady
-                    ? 'text-emerald-600'
-                    : dbHealth?.connected
-                      ? 'text-amber-600'
-                      : 'text-red-600'
+                  dbHealth?.fallbackActive
+                    ? 'text-amber-600'
+                    : dbHealth?.connected && dbHealth?.schemaReady
+                      ? 'text-emerald-600'
+                      : dbHealth?.connected
+                        ? 'text-amber-600'
+                        : 'text-red-600'
                 }`}
               />
-              {dbHealth?.connected && dbHealth?.schemaReady
-                ? 'DB Connected'
-                : dbHealth?.connected
-                  ? 'Schema Needed'
-                  : 'DB Disconnected'}
+              {dbHealth?.fallbackActive
+                ? 'SQLite Fallback'
+                : dbHealth?.connected && dbHealth?.schemaReady
+                  ? dbHealth?.dialect === 'postgresql'
+                    ? 'Neon Connected'
+                    : 'DB Connected'
+                  : dbHealth?.connected
+                    ? 'Schema Needed'
+                    : 'DB Disconnected'}
             </button>
 
             <button

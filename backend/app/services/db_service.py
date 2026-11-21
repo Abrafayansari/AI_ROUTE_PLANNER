@@ -173,10 +173,19 @@ def is_database_configured() -> bool:
 
 
 def check_database_health() -> dict:
+    fallback_active = bool(current_app.config.get("DATABASE_FALLBACK_ACTIVE", False))
+    fallback_reason = current_app.config.get("DATABASE_FALLBACK_REASON")
+
     if not is_database_configured():
         return {
             "configured": False,
             "connected": False,
+            "dialect": None,
+            "activeDatabase": "None",
+            "neonReachable": False,
+            "neonTablesVerified": False,
+            "fallbackActive": False,
+            "fallbackReason": None,
             "schemaReady": False,
             "missingTables": list(REQUIRED_TABLES),
             "existingTables": [],
@@ -194,7 +203,7 @@ def check_database_health() -> dict:
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
                 )
             ).fetchall()
-            engine_label = "SQLite database"
+            engine_label = "SQLite (local fallback)" if fallback_active else "SQLite database"
         else:
             rows = db.session.execute(
                 text(
@@ -206,21 +215,35 @@ def check_database_health() -> dict:
                     """
                 )
             ).fetchall()
-            engine_label = "Neon PostgreSQL"
+            engine_label = "PostgreSQL"
 
         latency_ms = round((time.perf_counter() - start_t) * 1000.0)
         present = {str(r[0]) for r in rows}
         existing = [t for t in REQUIRED_TABLES if t in present]
         missing = [t for t in REQUIRED_TABLES if t not in present]
         schema_ready = len(missing) == 0
-        message = (
+        is_pg = dialect_name == "postgresql"
+
+        base_msg = (
             f"Connected to {engine_label} ({latency_ms} ms); all {len(REQUIRED_TABLES)} schema tables verified."
             if schema_ready
             else f"Connected to {engine_label} ({latency_ms} ms), but {len(missing)} required table(s) are missing: {', '.join(missing)}."
         )
+        message = (
+            f"SQLite fallback active ({fallback_reason}). {base_msg}"
+            if fallback_active and fallback_reason
+            else base_msg
+        )
+
         return {
             "configured": True,
             "connected": True,
+            "dialect": dialect_name,
+            "activeDatabase": engine_label,
+            "neonReachable": is_pg,
+            "neonTablesVerified": is_pg and schema_ready,
+            "fallbackActive": fallback_active,
+            "fallbackReason": fallback_reason,
             "schemaReady": schema_ready,
             "missingTables": missing,
             "existingTables": existing,
@@ -231,6 +254,12 @@ def check_database_health() -> dict:
         return {
             "configured": True,
             "connected": False,
+            "dialect": None,
+            "activeDatabase": "None",
+            "neonReachable": False,
+            "neonTablesVerified": False,
+            "fallbackActive": fallback_active,
+            "fallbackReason": fallback_reason,
             "schemaReady": False,
             "missingTables": list(REQUIRED_TABLES),
             "existingTables": [],

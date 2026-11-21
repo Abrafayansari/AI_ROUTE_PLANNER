@@ -22,7 +22,24 @@ import type {
   TravelMode,
 } from '../types';
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+function resolveApiBaseUrl(rawValue: string | undefined): string {
+  const trimmed = (rawValue || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '');
+    } catch {
+      return '';
+    }
+  }
+  if (trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  return '';
+}
+
+export const API_BASE_URL = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 const http = axios.create({
   baseURL: API_BASE_URL,
@@ -35,7 +52,7 @@ const http = axios.create({
 function extractAxiosErrorMessage(err: unknown): string {
   if (err instanceof AxiosError) {
     const body = err.response?.data as ApiResponse<unknown> | undefined;
-    if (body?.error?.message) {
+    if (body && typeof body === 'object' && body.error?.message) {
       return body.error.message;
     }
     if (err.response?.status) {
@@ -53,6 +70,9 @@ async function request<T>(
   try {
     const res = await http.request<ApiResponse<T>>(config);
     const json = res.data;
+    if (!json || typeof json !== 'object') {
+      throw new Error('Unexpected non-JSON response from API server.');
+    }
     if (!json.success) {
       throw new Error(json.error?.message || `Request failed with status ${res.status}`);
     }
@@ -64,13 +84,19 @@ async function request<T>(
 
 export async function fetchHealth(): Promise<HealthPayload> {
   try {
-    const res = await http.get<ApiResponse<HealthPayload>>('/api/health');
-    if (res.data?.data) return res.data.data;
-    throw new Error(res.data?.error?.message || 'Unable to check health');
+    const res = await http.get<ApiResponse<HealthPayload>>('/api/health', {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    const body = res.data;
+    if (!body || typeof body !== 'object') {
+      throw new Error('Received non-JSON response from /api/health.');
+    }
+    if (body.data?.database) return body.data;
+    throw new Error(body.error?.message || 'Unable to check health');
   } catch (err) {
-    if (err instanceof AxiosError && err.response?.data) {
+    if (err instanceof AxiosError && err.response?.data && typeof err.response.data === 'object') {
       const payload = err.response.data as ApiResponse<HealthPayload>;
-      if (payload.data) return payload.data;
+      if (payload.data?.database) return payload.data;
     }
     throw new Error(extractAxiosErrorMessage(err));
   }

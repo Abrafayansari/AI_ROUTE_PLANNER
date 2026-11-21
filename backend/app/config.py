@@ -28,6 +28,32 @@ def is_postgresql_uri(uri: str | None) -> bool:
     return bool(uri and uri.strip().lower().startswith("postgresql"))
 
 
+def is_placeholder_database_url(raw_url: str | None) -> bool:
+    """Detect unset or template-placeholder DATABASE_URL values."""
+    if not raw_url or not raw_url.strip():
+        return True
+    cleaned = raw_url.strip()
+    if cleaned.lower().startswith("sqlite:"):
+        return False
+    if any(marker in cleaned for marker in ("<", ">", "USER:PASSWORD", "YOUR_")):
+        return True
+    try:
+        parsed = urlparse(cleaned)
+        host = (parsed.hostname or "").strip().lower()
+    except Exception:
+        return True
+    return host in {"", "host", "your-host", "your_host", "db_host", "placeholder", "example.com"}
+
+
+def get_local_sqlite_database_url() -> str:
+    """Return a writable local SQLite URI under backend/instance for zero-config runtime fallback."""
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    instance_dir = os.path.join(backend_dir, "instance")
+    os.makedirs(instance_dir, exist_ok=True)
+    db_path = os.path.join(instance_dir, "smart_route_planner.db").replace("\\", "/")
+    return f"sqlite:///{db_path}"
+
+
 def normalize_sqlalchemy_database_url(raw_url: str | None) -> str | None:
     """Normalize Neon PostgreSQL URL for SQLAlchemy + psycopg v3 while preserving SQLite URIs."""
     if not raw_url:
@@ -49,10 +75,11 @@ def normalize_sqlalchemy_database_url(raw_url: str | None) -> str | None:
     # Preserve SSL parameters while safely handling channel_binding if needed
     parsed = urlparse(cleaned)
     query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    # Keep sslmode=require if specified; drop channel_binding only if empty or unsupported
+    # Keep sslmode=require if specified; drop channel_binding only if unsupported
     filtered_pairs = [(k, v) for (k, v) in query_pairs if k.lower() != "channel_binding"]
+    hostname = (parsed.hostname or "").lower()
     if not any(k.lower() == "sslmode" for k, _ in filtered_pairs):
-        if "neon.tech" in (parsed.hostname or "").lower():
+        if hostname not in ("localhost", "127.0.0.1", "::1"):
             filtered_pairs.append(("sslmode", "require"))
 
     new_query = urlencode(filtered_pairs)
@@ -66,6 +93,7 @@ def build_engine_options(uri: str | None, configured: bool) -> dict:
             "pool_recycle": 300,
             "pool_size": 5,
             "max_overflow": 5,
+            "connect_args": {"connect_timeout": 3},
         }
     return {}
 

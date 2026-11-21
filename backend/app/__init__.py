@@ -3,7 +3,12 @@ from __future__ import annotations
 import time
 from flask import Flask, g, request
 
-from app.config import Config, build_engine_options, redact_secrets
+from app.config import (
+    Config,
+    build_engine_options,
+    is_postgresql_uri,
+    redact_secrets,
+)
 from app.extensions import cors, db, migrate
 from app.routes import (
     clustering_bp,
@@ -30,6 +35,10 @@ def create_app(config_overrides: dict | None = None) -> Flask:
             flask_app.config.get("SQLALCHEMY_DATABASE_URI"),
             bool(flask_app.config.get("DATABASE_CONFIGURED")),
         )
+
+    flask_app.config.setdefault("DATABASE_FALLBACK_ACTIVE", False)
+    flask_app.config.setdefault("DATABASE_FALLBACK_REASON", None)
+    flask_app.config["NEON_REACHABLE"] = False
 
     db.init_app(flask_app)
     migrate.init_app(flask_app, db, directory="migrations")
@@ -98,8 +107,10 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         with flask_app.app_context():
             try:
                 res = apply_migrations_idempotently()
+                if is_postgresql_uri(flask_app.config.get("SQLALCHEMY_DATABASE_URI")):
+                    flask_app.config["NEON_REACHABLE"] = True
                 print(f"Database schema verified: {', '.join(res['applied'])}")
             except Exception as exc:
-                print(f"Startup schema check skipped: {redact_secrets(str(exc))}")
+                print(f"Startup Neon schema/connection check failed: {redact_secrets(str(exc))}")
 
     return flask_app

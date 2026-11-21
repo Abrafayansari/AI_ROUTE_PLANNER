@@ -32,6 +32,12 @@ export default function App() {
       setDbHealth({
         configured: false,
         connected: false,
+        dialect: null,
+        activeDatabase: 'Disconnected',
+        neonReachable: false,
+        neonTablesVerified: false,
+        fallbackActive: false,
+        fallbackReason: null,
         schemaReady: false,
         missingTables: [],
         existingTables: [],
@@ -112,9 +118,7 @@ export default function App() {
           element={
             <SettingsPage
               dbHealth={dbHealth}
-              onRefreshHealth={async () => {
-                await refreshHealth();
-              }}
+              onRefreshHealth={refreshHealth}
               onNotify={notify}
             />
           }

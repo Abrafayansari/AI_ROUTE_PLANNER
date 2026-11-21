@@ -1142,8 +1142,13 @@ def get_analytics_summary() -> dict:
             "No distributors are stored yet. Add distributors or load the demo dataset to begin."
         )
     else:
+        db_label = (
+            "Neon PostgreSQL"
+            if db.engine.dialect.name == "postgresql"
+            else "local SQLite fallback"
+        )
         insights.append(
-            f"There are {active_distributors} active distributor(s) out of {total_distributors} total stored in Neon PostgreSQL."
+            f"There are {active_distributors} active distributor(s) out of {total_distributors} total stored in {db_label}."
         )
 
     if algorithm_averages:

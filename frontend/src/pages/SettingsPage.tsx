@@ -6,7 +6,7 @@ import type { DatabaseHealth } from '../types';
 
 interface SettingsPageProps {
   dbHealth: DatabaseHealth | null;
-  onRefreshHealth: () => Promise<void>;
+  onRefreshHealth: () => Promise<boolean | void>;
   onNotify: (kind: 'success' | 'error', text: string) => void;
 }
 
@@ -17,7 +17,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 }) => {
   const [busyInit, setBusyInit] = useState(false);
   const [busyDemo, setBusyDemo] = useState(false);
+  const [checkingHealth, setCheckingHealth] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+
+  const handleRecheckHealth = async () => {
+    setCheckingHealth(true);
+    try {
+      const ok = await onRefreshHealth();
+      if (ok === false) {
+        onNotify('error', 'Health check failed — see database status details below.');
+      }
+    } finally {
+      setCheckingHealth(false);
+    }
+  };
 
   const handleInitSchema = async () => {
     setBusyInit(true);
@@ -59,6 +72,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   };
 
+  const existingCount = dbHealth?.existingTables.length ?? 0;
+  const missingCount = dbHealth?.missingTables.length ?? 0;
+  const requiredCount = dbHealth ? existingCount + missingCount : 10;
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-slate-200 bg-white p-6">
@@ -67,56 +84,92 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <Database className="h-5 w-5 text-slate-700" />
             <div>
               <h3 className="text-base font-semibold text-slate-900">
-                Neon PostgreSQL Connection & Schema Status
+                Database Connection &amp; Schema Audit ({dbHealth?.activeDatabase || 'Checking...'})
               </h3>
               <p className="text-xs text-slate-500">
-                Verified by Flask + SQLAlchemy via GET /api/health · Credentials never leave the server
+                Verified by Flask + SQLAlchemy via GET /api/health · Dialect:{' '}
+                <code className="font-mono">{dbHealth?.dialect ?? 'unknown'}</code> · Fallback:{' '}
+                <code className="font-mono">
+                  {dbHealth ? (dbHealth.fallbackActive ? 'active' : 'inactive') : 'unknown'}
+                </code>{' '}
+                · Credentials never leave the server
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={() => void onRefreshHealth()}
-            className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            disabled={checkingHealth}
+            onClick={() => void handleRecheckHealth()}
+            className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Re-check Health
+            <RefreshCw className={`h-3.5 w-3.5 ${checkingHealth ? 'animate-spin' : ''}`} />
+            {checkingHealth ? 'Checking...' : 'Re-check Health'}
           </button>
         </div>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        {dbHealth && !dbHealth.connected && (
+          <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-4 text-xs text-red-900">
+            <p className="font-semibold">Database Health Check Error</p>
+            <p className="mt-1">{dbHealth.message || 'Unable to verify database health.'}</p>
+          </div>
+        )}
+
+        {dbHealth?.fallbackActive && (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+            <p className="font-semibold">
+              SQLite Fallback Active — Not Connected to Neon PostgreSQL
+            </p>
+            <p className="mt-1">
+              {dbHealth.fallbackReason ||
+                'Neon PostgreSQL is unreachable or unconfigured; local SQLite fallback is active.'}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-4">
           <div className="rounded-md border border-slate-200 p-4">
-            <p className="text-xs text-slate-500">DATABASE_URL Secret</p>
+            <p className="text-xs text-slate-500">Active Dialect</p>
+            <p className="mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold text-slate-900">
+              {dbHealth?.activeDatabase && dbHealth.dialect === 'postgresql'
+                ? `${dbHealth.activeDatabase} (${dbHealth.dialect})`
+                : (dbHealth?.dialect ?? 'unknown')}
+            </p>
+          </div>
+
+          <div className="rounded-md border border-slate-200 p-4">
+            <p className="text-xs text-slate-500">Neon PostgreSQL</p>
             <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
-              {dbHealth?.configured ? (
+              {dbHealth?.neonReachable ? (
                 <>
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span className="text-emerald-700">Configured</span>
+                  <span className="text-emerald-700">Neon Connected</span>
                 </>
               ) : (
                 <>
-                  <XCircle className="h-4 w-4 text-red-600" />
-                  <span className="text-red-700">Not Configured</span>
+                  <XCircle className="h-4 w-4 text-amber-600" />
+                  <span className="text-amber-700">Not Connected</span>
                 </>
               )}
             </p>
           </div>
 
           <div className="rounded-md border border-slate-200 p-4">
-            <p className="text-xs text-slate-500">Database Connectivity</p>
+            <p className="text-xs text-slate-500">Active Engine</p>
             <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
               {dbHealth?.connected ? (
                 <>
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span className="text-emerald-700">
-                    Connected ({dbHealth.latencyMs ?? 0} ms)
+                  <CheckCircle2
+                    className={`h-4 w-4 ${dbHealth.fallbackActive ? 'text-amber-600' : 'text-emerald-600'}`}
+                  />
+                  <span className={dbHealth.fallbackActive ? 'text-amber-700' : 'text-emerald-700'}>
+                    {dbHealth.fallbackActive ? 'SQLite Fallback' : 'Connected'} ({dbHealth.latencyMs ?? 0} ms)
                   </span>
                 </>
               ) : (
                 <>
-                  <XCircle className="h-4 w-4 text-amber-600" />
-                  <span className="text-amber-700">Disconnected</span>
+                  <XCircle className="h-4 w-4 text-red-600" />
+                  <span className="text-red-700">Disconnected</span>
                 </>
               )}
             </p>
@@ -124,21 +177,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
           <div className="rounded-md border border-slate-200 p-4">
             <p className="text-xs text-slate-500">
-              Schema Tables ({((dbHealth ? dbHealth.existingTables.length + dbHealth.missingTables.length : 0) || 10)} Required)
+              Schema Tables ({requiredCount || 10} Required)
             </p>
             <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
               {dbHealth?.schemaReady ? (
                 <>
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                   <span className="text-emerald-700">
-                    All {((dbHealth.existingTables.length + dbHealth.missingTables.length) || 10)} Ready
+                    {existingCount} / {requiredCount || 10} Verified
                   </span>
                 </>
               ) : (
                 <>
                   <XCircle className="h-4 w-4 text-amber-600" />
                   <span className="text-amber-700">
-                    {dbHealth?.existingTables.length ?? 0} / {((dbHealth ? dbHealth.existingTables.length + dbHealth.missingTables.length : 0) || 10)} Present
+                    {existingCount} / {requiredCount || 10} Present
                   </span>
                 </>
               )}
@@ -147,6 +200,24 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
 
         <p className="mt-4 text-sm text-slate-700">{dbHealth?.message}</p>
+
+        {dbHealth?.existingTables && dbHealth.existingTables.length > 0 && (
+          <div className="mt-3 rounded-md border border-slate-100 bg-slate-50 p-3">
+            <p className="text-xs font-medium text-slate-600">
+              Verified Tables ({dbHealth.existingTables.length}):
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {dbHealth.existingTables.map((table) => (
+                <span
+                  key={table}
+                  className="rounded border border-slate-200 bg-white px-2 py-0.5 font-mono text-[11px] text-slate-700"
+                >
+                  {table}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {dbHealth?.missingTables && dbHealth.missingTables.length > 0 && (
           <p className="mt-2 font-mono text-xs text-amber-800">
