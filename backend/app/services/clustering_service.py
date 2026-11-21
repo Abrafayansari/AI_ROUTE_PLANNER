@@ -4,10 +4,14 @@ from datetime import date
 from app.algorithms.kmeans import run_kmeans
 from app.extensions import db
 from app.models import Distributor, DistributorCluster, OfficeLocation, RoutePlan
+from app.utils.metrics import haversine_km
 
 
 def resolve_workspace_route_plan_id(
-    requested_plan_id: str | None, fallback_name: str, plan_date_str: str
+    requested_plan_id: str | None,
+    fallback_name: str,
+    plan_date_str: str,
+    office_id: str | None = None,
 ) -> str:
     if requested_plan_id:
         existing = db.session.get(RoutePlan, requested_plan_id)
@@ -16,15 +20,23 @@ def resolve_workspace_route_plan_id(
 
     named = db.session.query(RoutePlan).filter_by(name=fallback_name).first()
     if named:
+        if office_id and str(named.office_id) != str(office_id):
+            named.office_id = str(office_id)
+            db.session.flush()
         return str(named.id)
 
-    office = (
-        db.session.query(OfficeLocation)
-        .order_by(OfficeLocation.is_default.desc(), OfficeLocation.created_at.asc())
-        .first()
-    )
-    if office is None:
-        raise ValueError("NO_OFFICE_LOCATION")
+    if office_id:
+        office = db.session.get(OfficeLocation, office_id)
+        if office is None:
+            raise ValueError("NO_OFFICE_LOCATION")
+    else:
+        office = (
+            db.session.query(OfficeLocation)
+            .order_by(OfficeLocation.is_default.desc(), OfficeLocation.created_at.asc())
+            .first()
+        )
+        if office is None:
+            raise ValueError("NO_OFFICE_LOCATION")
 
     plan = RoutePlan(
         name=fallback_name,
@@ -70,18 +82,24 @@ def get_latest_clusters() -> dict | None:
     for c in clusters:
         label = c.cluster_label or f"Cluster {c.cluster_number + 1}"
         member_ids = c.distributor_ids or []
+        c_lat = float(c.centroid_latitude or 0.0)
+        c_lng = float(c.centroid_longitude or 0.0)
         centroids.append(
             {
                 "clusterIndex": int(c.cluster_number),
                 "clusterLabel": label,
-                "centroidLat": float(c.centroid_latitude or 0.0),
-                "centroidLng": float(c.centroid_longitude or 0.0),
+                "centroidLat": c_lat,
+                "centroidLng": c_lng,
                 "count": len(member_ids),
             }
         )
         for did in member_ids:
             d = dist_map.get(str(did))
             if d:
+                dist_km = round(
+                    haversine_km(float(d.latitude), float(d.longitude), c_lat, c_lng),
+                    3,
+                )
                 assignments.append(
                     {
                         "distributorId": str(d.id),
@@ -90,7 +108,7 @@ def get_latest_clusters() -> dict | None:
                         "longitude": float(d.longitude),
                         "clusterIndex": int(c.cluster_number),
                         "clusterLabel": label,
-                        "distanceToCentroidKm": 0.0,
+                        "distanceToCentroidKm": dist_km,
                     }
                 )
 

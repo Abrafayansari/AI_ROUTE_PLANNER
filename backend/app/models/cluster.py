@@ -2,19 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
 from app.extensions import db
+from app.models.types import PortableUUID, PortableUUIDList
 
 
 class DistributorCluster(db.Model):
     __tablename__ = "distributor_clusters"
 
     id = db.Column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+        PortableUUID, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     route_plan_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("route_plans.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -23,7 +23,7 @@ class DistributorCluster(db.Model):
     centroid_latitude = db.Column(db.Float, nullable=True)
     centroid_longitude = db.Column(db.Float, nullable=True)
     distributor_ids = db.Column(
-        ARRAY(UUID(as_uuid=False)), nullable=False, default=list
+        PortableUUIDList, nullable=False, default=list
     )
     created_at = db.Column(
         db.DateTime(timezone=True),

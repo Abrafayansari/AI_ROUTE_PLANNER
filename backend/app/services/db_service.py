@@ -22,31 +22,31 @@ REQUIRED_TABLES = [
 ]
 
 DEMO_OFFICER = {
-    "name": "Alex Morgan (Demo Field Officer)",
+    "name": "Tariq Mahmood (Demo Field Officer)",
     "email": "demo.officer@fieldops.example",
-    "phone": "555-0100",
-    "territory": "Central Metro District",
+    "phone": "+92-300-5550100",
+    "territory": "Karachi Metro District",
     "work_start_time": "09:00",
     "work_end_time": "17:00",
     "max_daily_visits": 10,
 }
 
 DEMO_OFFICE = {
-    "name": "Central Distribution Hub (Demo)",
-    "address": "100 Commerce Way, Metro Center",
-    "latitude": 30.2672,
-    "longitude": -97.7431,
+    "name": "Karachi Central Hub (Demo)",
+    "address": "Plot 14-C, Shahrah-e-Faisal, PECHS Block 6, Karachi",
+    "latitude": 24.8607,
+    "longitude": 67.0644,
 }
 
 DEMO_DISTRIBUTORS = [
     {
-        "name": "Northgate Wholesale Supply (Demo)",
-        "contact_person": "Jordan Lee",
-        "phone": "555-0101",
-        "email": "orders@northgate.example",
-        "address": "2400 N Lamar Blvd",
-        "latitude": 30.3075,
-        "longitude": -97.7422,
+        "name": "Clifton Supermart (Demo)",
+        "contact_person": "Zainab Raza",
+        "phone": "+92-300-5550101",
+        "email": "orders@cliftonmart.example",
+        "address": "Block 4, Marine Promenade, Clifton, Karachi",
+        "latitude": 24.8138,
+        "longitude": 67.0299,
         "priority": 5,
         "visit_duration_minutes": 35,
         "opening_time": "08:00",
@@ -54,83 +54,83 @@ DEMO_DISTRIBUTORS = [
         "notes": "Morning delivery check and quarterly stock review.",
     },
     {
-        "name": "Cedar Ridge Mart (Demo)",
-        "contact_person": "Priya Nair",
-        "phone": "555-0102",
-        "email": "buyer@cedarridge.example",
-        "address": "4120 Burnet Rd",
-        "latitude": 30.3189,
-        "longitude": -97.7392,
+        "name": "Saddar Wholesale Bazaar (Demo)",
+        "contact_person": "Bilal Siddiqui",
+        "phone": "+92-300-5550102",
+        "email": "buyer@saddarwholesale.example",
+        "address": "Abdullah Haroon Road, Saddar, Karachi",
+        "latitude": 24.8532,
+        "longitude": 67.0258,
         "priority": 4,
         "visit_duration_minutes": 30,
         "opening_time": "09:00",
         "closing_time": "17:00",
-        "notes": "Verify refrigerated shelf stock.",
+        "notes": "Verify refrigerated shelf stock and invoice reconciliation.",
     },
     {
-        "name": "Eastside Grocers Co-op (Demo)",
-        "contact_person": "Mateo Alvarez",
-        "phone": "555-0103",
-        "email": "supply@eastsidecoop.example",
-        "address": "1850 E 7th St",
-        "latitude": 30.2641,
-        "longitude": -97.7215,
+        "name": "DHA Phase 6 Traders (Demo)",
+        "contact_person": "Ayesha Kamran",
+        "phone": "+92-300-5550103",
+        "email": "supply@dhatraders.example",
+        "address": "Khayaban-e-Ittehad, DHA Phase 6, Karachi",
+        "latitude": 24.7937,
+        "longitude": 67.0647,
         "priority": 4,
         "visit_duration_minutes": 40,
         "opening_time": "08:30",
         "closing_time": "16:30",
-        "notes": "High-volume urban outlet.",
+        "notes": "High-volume southern urban outlet.",
     },
     {
-        "name": "Riverside Logistics Depot (Demo)",
-        "contact_person": "Hannah Brooks",
-        "phone": "555-0104",
-        "email": "receiving@riversidedepot.example",
-        "address": "2100 E Riverside Dr",
-        "latitude": 30.2412,
-        "longitude": -97.7288,
+        "name": "Korangi Logistics Depot (Demo)",
+        "contact_person": "Faisal Qureshi",
+        "phone": "+92-300-5550104",
+        "email": "receiving@korangidepot.example",
+        "address": "Sector 15, Korangi Industrial Area, Karachi",
+        "latitude": 24.8351,
+        "longitude": 67.1294,
         "priority": 5,
         "visit_duration_minutes": 45,
         "opening_time": "09:00",
         "closing_time": "15:30",
-        "notes": "Key account — confirm pallet return.",
+        "notes": "Key account — confirm pallet return and cold-chain manifest.",
     },
     {
-        "name": "Southpark Trade Center (Demo)",
-        "contact_person": "David Kim",
-        "phone": "555-0105",
-        "email": "desk@southparktrade.example",
-        "address": "5400 S Congress Ave",
-        "latitude": 30.2098,
-        "longitude": -97.7712,
+        "name": "Gulshan Supply Chain (Demo)",
+        "contact_person": "Sana Tariq",
+        "phone": "+92-300-5550105",
+        "email": "desk@gulshansupply.example",
+        "address": "Main University Road, Gulshan-e-Iqbal Block 13, Karachi",
+        "latitude": 24.9180,
+        "longitude": 67.0971,
         "priority": 3,
         "visit_duration_minutes": 30,
         "opening_time": "10:00",
         "closing_time": "18:00",
-        "notes": "Standard replenishment check.",
+        "notes": "Standard replenishment and display check.",
     },
     {
-        "name": "Westlake Provisions (Demo)",
-        "contact_person": "Claire Bennett",
-        "phone": "555-0106",
-        "email": "procurement@westlakeprov.example",
-        "address": "3200 Bee Cave Rd",
-        "latitude": 30.2784,
-        "longitude": -97.8012,
+        "name": "PECHS Commercial Provisions (Demo)",
+        "contact_person": "Hamza Farooq",
+        "phone": "+92-300-5550106",
+        "email": "procurement@pechsprov.example",
+        "address": "Tariq Road Junction, PECHS Block 2, Karachi",
+        "latitude": 24.8719,
+        "longitude": 67.0598,
         "priority": 3,
         "visit_duration_minutes": 25,
         "opening_time": "09:30",
         "closing_time": "17:30",
-        "notes": "Quick invoice sign-off.",
+        "notes": "Quick invoice sign-off near central hub.",
     },
     {
-        "name": "Barton Creek Retailers (Demo)",
+        "name": "SITE Industrial Distributors (Demo)",
         "contact_person": "Omar Farooq",
-        "phone": "555-0107",
-        "email": "ops@bartoncreek.example",
-        "address": "2901 S Capital Hwy",
-        "latitude": 30.2564,
-        "longitude": -97.8124,
+        "phone": "+92-300-5550107",
+        "email": "ops@sitedist.example",
+        "address": "Manghopir Road, SITE Industrial Estate, Karachi",
+        "latitude": 24.9045,
+        "longitude": 66.9936,
         "priority": 2,
         "visit_duration_minutes": 30,
         "opening_time": "11:00",
@@ -138,13 +138,13 @@ DEMO_DISTRIBUTORS = [
         "notes": "Opens late morning — schedule after 11:00.",
     },
     {
-        "name": "TechRidge Bulk Foods (Demo)",
-        "contact_person": "Sofia Rossi",
-        "phone": "555-0108",
-        "email": "inventory@techridge.example",
-        "address": "12900 N Interstate 35",
-        "latitude": 30.3542,
-        "longitude": -97.6941,
+        "name": "North Nazimabad Grocers (Demo)",
+        "contact_person": "Hina Javed",
+        "phone": "+92-300-5550108",
+        "email": "inventory@nazimabadgrocers.example",
+        "address": "Shahrah-e-Sher Shah Suri, Block H, North Nazimabad, Karachi",
+        "latitude": 24.9389,
+        "longitude": 67.0375,
         "priority": 4,
         "visit_duration_minutes": 35,
         "opening_time": "08:00",
@@ -152,18 +152,18 @@ DEMO_DISTRIBUTORS = [
         "notes": "Northern corridor anchor stop.",
     },
     {
-        "name": "Mueller Market Exchange (Demo)",
-        "contact_person": "Liam OConnor",
-        "phone": "555-0109",
-        "email": "store@muellermarket.example",
-        "address": "1900 Aldrich St",
-        "latitude": 30.2965,
-        "longitude": -97.7048,
+        "name": "Gulistan-e-Johar Market Exchange (Demo)",
+        "contact_person": "Kamran Sheikh",
+        "phone": "+92-300-5550109",
+        "email": "store@joharexchange.example",
+        "address": "Jauhar Chowrangi, Block 15, Gulistan-e-Johar, Karachi",
+        "latitude": 24.9162,
+        "longitude": 67.1319,
         "priority": 2,
         "visit_duration_minutes": 25,
         "opening_time": "10:00",
         "closing_time": "18:00",
-        "notes": "Promotional display inspection.",
+        "notes": "Promotional display inspection and eastern hub check.",
     },
 ]
 
@@ -187,25 +187,36 @@ def check_database_health() -> dict:
     start_t = time.perf_counter()
     try:
         db.session.execute(text("SELECT 1"))
-        rows = db.session.execute(
-            text(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public'
-                  AND table_type = 'BASE TABLE'
-                """
-            )
-        ).fetchall()
+        dialect_name = db.engine.dialect.name
+        if dialect_name == "sqlite":
+            rows = db.session.execute(
+                text(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                )
+            ).fetchall()
+            engine_label = "SQLite database"
+        else:
+            rows = db.session.execute(
+                text(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                      AND table_type = 'BASE TABLE'
+                    """
+                )
+            ).fetchall()
+            engine_label = "Neon PostgreSQL"
+
         latency_ms = round((time.perf_counter() - start_t) * 1000.0)
         present = {str(r[0]) for r in rows}
         existing = [t for t in REQUIRED_TABLES if t in present]
         missing = [t for t in REQUIRED_TABLES if t not in present]
         schema_ready = len(missing) == 0
         message = (
-            f"Connected to Neon PostgreSQL ({latency_ms} ms); all {len(REQUIRED_TABLES)} schema tables verified."
+            f"Connected to {engine_label} ({latency_ms} ms); all {len(REQUIRED_TABLES)} schema tables verified."
             if schema_ready
-            else f"Connected to Neon PostgreSQL ({latency_ms} ms), but {len(missing)} required table(s) are missing: {', '.join(missing)}."
+            else f"Connected to {engine_label} ({latency_ms} ms), but {len(missing)} required table(s) are missing: {', '.join(missing)}."
         )
         return {
             "configured": True,
@@ -231,9 +242,17 @@ def check_database_health() -> dict:
 def apply_migrations_idempotently() -> dict:
     """
     Idempotently create missing tables/columns without ever dropping tables or
-    deleting existing records in Neon PostgreSQL.
+    deleting existing records in Neon PostgreSQL or SQLite test databases.
     """
     applied: list[str] = []
+
+    if db.engine.dialect.name == "sqlite":
+        db.create_all()
+        applied.append("sqlite_create_all_verified")
+        return {
+            "applied": applied,
+            "message": "SQLite database schema verified without altering existing data.",
+        }
 
     ddl_statements = [
         "CREATE EXTENSION IF NOT EXISTS pgcrypto;",
@@ -300,11 +319,11 @@ def apply_migrations_idempotently() -> dict:
             selected_algorithm VARCHAR(50),
             total_distance_km DOUBLE PRECISION NOT NULL DEFAULT 0,
             total_duration_minutes INTEGER NOT NULL DEFAULT 0,
-            distance_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.25,
+            distance_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0,
             graph_seed INTEGER NOT NULL DEFAULT 42,
             status VARCHAR(30) NOT NULL DEFAULT 'draft',
             map_provider VARCHAR(40) NOT NULL DEFAULT 'simulated',
-            notes TEXT,
+            notes TEXT DEFAULT '',
             is_demo BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -449,12 +468,13 @@ def apply_migrations_idempotently() -> dict:
     for stmt in ddl_statements:
         db.session.execute(text(stmt))
     db.session.commit()
-    applied.append("001_003_idempotent_schema_verified")
+    applied.append("001_004_idempotent_schema_verified")
 
     return {
         "applied": applied,
         "message": "Neon PostgreSQL schema verified and aligned without altering existing data.",
     }
+
 
 
 def load_demo_data() -> dict:

@@ -211,7 +211,7 @@ def test_api_predictions_endpoints():
         assert cpt_json["success"] is True
         assert cpt_json["data"]["totalRows"] == 54
 
-        # 3. Visit Delay Prediction POST
+        # 3. Visit Delay Prediction POST (full evidence)
         pred_res = client.post(
             "/api/predictions/visit-delay",
             json={
@@ -228,3 +228,46 @@ def test_api_predictions_endpoints():
         assert "predictedRisk" in pred_json["data"]
         assert "probabilities" in pred_json["data"]
         assert abs(sum(pred_json["data"]["probabilities"].values()) - 1.0) < 1e-4
+
+        # 4. Partial evidence marginalization via API
+        partial_res = client.post(
+            "/api/predictions/visit-delay",
+            json={
+                "distributorName": "Partial API Stop",
+                "distanceCategory": "Far",
+                "timeSlot": "Afternoon",
+                "allowPartial": True,
+            },
+        )
+        assert partial_res.status_code == 200
+        partial_data = partial_res.get_json()["data"]
+        assert partial_data["isPartialEvidence"] is True
+        assert set(partial_data["marginalizedVariables"]) == {"VisitDuration", "Priority"}
+        assert partial_data["evidence"]["visitDurationCategory"] == "Unobserved"
+        assert partial_data["evidence"]["priorityCategory"] == "Unobserved"
+        assert abs(sum(partial_data["probabilities"].values()) - 1.0) < 1e-4
+
+
+def test_partial_evidence_marginalization_matches_prior_weighting():
+    bn = get_bayesian_network()
+    res = bn.predict_visit(
+        distributor_id=None,
+        distributor_name="Partial Stop",
+        distance_category="Far",
+        time_slot="Afternoon",
+        allow_partial=True,
+    )
+    assert res["isPartialEvidence"] is True
+    assert set(res["marginalizedVariables"]) == {"VisitDuration", "Priority"}
+    assert res["evidence"]["visitDurationCategory"] == "Unobserved"
+    assert res["evidence"]["priorityCategory"] == "Unobserved"
+    assert abs(sum(res["probabilities"].values()) - 1.0) < 1e-4
+
+    # All-unobserved must still raise even with allow_partial=True
+    with pytest.raises(ValueError, match="At least one Bayesian Network evidence variable"):
+        bn.predict_visit(
+            distributor_id=None,
+            distributor_name="All Empty",
+            allow_partial=True,
+        )
+

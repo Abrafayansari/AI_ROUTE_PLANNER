@@ -30,8 +30,8 @@ const EMPTY_FORM: DistributorFormState = {
   phone: '',
   email: '',
   address: '',
-  latitude: '30.2700',
-  longitude: '-97.7400',
+  latitude: '',
+  longitude: '',
   priority: '3',
   visit_duration_minutes: '30',
   opening_time: '09:00',
@@ -165,10 +165,10 @@ export const DistributorsPage: React.FC<DistributorsPageProps> = ({ onNotify }) 
 
       if (editingId) {
         await api.updateDistributor(editingId, payload);
-        onNotify('success', 'Distributor updated in Neon PostgreSQL.');
+        onNotify('success', 'Distributor updated in database.');
       } else {
         await api.createDistributor(payload);
-        onNotify('success', 'Distributor created in Neon PostgreSQL.');
+        onNotify('success', 'Distributor created in database.');
       }
       setModalOpen(false);
       await loadList(1);
@@ -531,6 +531,7 @@ export const DistributorsPage: React.FC<DistributorsPageProps> = ({ onNotify }) 
                     type="number"
                     step="any"
                     required
+                    placeholder="e.g. 24.8138"
                     value={form.latitude}
                     onChange={(e) => setForm({ ...form, latitude: e.target.value })}
                     className="mt-1 w-full rounded-md border border-slate-200 px-3 py-1.5 font-mono text-sm"
@@ -544,6 +545,7 @@ export const DistributorsPage: React.FC<DistributorsPageProps> = ({ onNotify }) 
                     type="number"
                     step="any"
                     required
+                    placeholder="e.g. 67.0299"
                     value={form.longitude}
                     onChange={(e) => setForm({ ...form, longitude: e.target.value })}
                     className="mt-1 w-full rounded-md border border-slate-200 px-3 py-1.5 font-mono text-sm"

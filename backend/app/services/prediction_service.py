@@ -106,7 +106,8 @@ def get_cpt_data() -> dict[str, Any]:
 def predict_single_visit(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Calculate delay probabilities for a single distributor given supplied evidence
-    or by looking up the distributor in Neon PostgreSQL.
+    or by looking up the distributor in the database. Supports partial evidence
+    via Bayesian marginalization over unobserved parents.
     """
     bn = get_bayesian_network()
 
@@ -117,38 +118,51 @@ def predict_single_visit(payload: dict[str, Any]) -> dict[str, Any]:
 
     name = payload.get("distributorName") or (distributor.name if distributor else "Distributor")
     distance_km = payload.get("distanceKm")
-    if distance_km is None and payload.get("distanceCategory") is None:
-        distance_km = 4.5  # fallback default if unprovided
 
     visit_dur = payload.get("visitDurationMinutes")
-    if visit_dur is None:
-        visit_dur = distributor.visit_duration_minutes if distributor else 30
+    if (
+        visit_dur is None
+        and payload.get("visitDurationCategory") is None
+        and distributor is not None
+    ):
+        visit_dur = distributor.visit_duration_minutes
 
-    time_slot = payload.get("timeSlot") or payload.get("timeSlotRaw") or "10:00"
-    priority = payload.get("priority") or payload.get("priorityRaw")
+    raw_ts = payload.get("timeSlotRaw") or payload.get("timeSlot")
+    ts_category = payload.get("timeSlot") if payload.get("timeSlot") in ("Morning", "Afternoon") else None
+    if raw_ts == "Unobserved":
+        raw_ts = None
+
+    priority = payload.get("priority")
     if priority is None:
-        priority = distributor.priority if distributor else 3
+        priority = payload.get("priorityRaw")
+    if (
+        priority is None
+        and payload.get("priorityCategory") is None
+        and distributor is not None
+    ):
+        priority = distributor.priority
 
     prediction = bn.predict_visit(
         distributor_id=distributor_id,
         distributor_name=name,
         distance_km=distance_km,
         visit_duration_minutes=visit_dur,
-        time_slot_raw=time_slot,
+        time_slot_raw=raw_ts,
         priority_raw=priority,
         distance_category=payload.get("distanceCategory"),
         visit_duration_category=payload.get("visitDurationCategory"),
-        time_slot=payload.get("timeSlot") if payload.get("timeSlot") in ("Morning", "Afternoon") else None,
+        time_slot=ts_category,
         priority_category=payload.get("priorityCategory"),
         stop_order=payload.get("stopOrder"),
         route_plan_id=payload.get("routePlanId"),
+        allow_partial=True,
     )
 
     # Optionally persist if requested
-    if payload.get("saveToDb") and distributor_id:
+    if payload.get("saveToDb"):
         db_record = VisitDelayPrediction(
             route_plan_id=payload.get("routePlanId"),
-            distributor_id=distributor_id,
+            distributor_id=distributor_id if distributor is not None else None,
             distributor_name=name,
             stop_order=payload.get("stopOrder"),
             distance_km=distance_km,

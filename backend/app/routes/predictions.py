@@ -14,7 +14,7 @@ from app.services.prediction_service import (
     predict_single_visit,
 )
 from app.utils.responses import fail, ok
-from app.utils.validation import RouteDelayInput, VisitDelayInput
+from app.utils.validation import RouteDelayInput, VisitDelayInput, is_valid_uuid
 
 predictions_bp = Blueprint("predictions", __name__)
 
@@ -92,7 +92,12 @@ def get_prediction_history():
     """Retrieve saved visit delay predictions from Neon PostgreSQL."""
     try:
         plan_id = request.args.get("routePlanId")
-        limit = int(request.args.get("limit") or 50)
+        if plan_id and not is_valid_uuid(plan_id):
+            return fail(400, "INVALID_ID", "Invalid routePlanId UUID format.")
+        try:
+            limit = int(request.args.get("limit") or 50)
+        except ValueError:
+            return fail(400, "VALIDATION_ERROR", "limit must be an integer.")
         items = list_prediction_history(route_plan_id=plan_id, limit=limit)
         return ok({"items": items, "count": len(items)})
     except Exception as exc:

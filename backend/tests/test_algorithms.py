@@ -18,18 +18,18 @@ from app.utils.metrics import (
 )
 
 SAMPLE_NODES = [
-    {"id": "office", "name": "Central Office", "latitude": 30.2672, "longitude": -97.7431, "isOffice": True},
-    {"id": "d1", "name": "North Stop", "latitude": 30.3075, "longitude": -97.7422, "isOffice": False},
-    {"id": "d2", "name": "Northeast Stop", "latitude": 30.2965, "longitude": -97.7048, "isOffice": False},
-    {"id": "d3", "name": "East Stop", "latitude": 30.2641, "longitude": -97.7215, "isOffice": False},
-    {"id": "d4", "name": "South Stop", "latitude": 30.2098, "longitude": -97.7712, "isOffice": False},
-    {"id": "d5", "name": "West Stop", "latitude": 30.2784, "longitude": -97.8012, "isOffice": False},
+    {"id": "office", "name": "Karachi Central Hub", "latitude": 24.8607, "longitude": 67.0644, "isOffice": True},
+    {"id": "d1", "name": "North Nazimabad Stop", "latitude": 24.9010, "longitude": 67.0644, "isOffice": False},
+    {"id": "d2", "name": "Gulshan-e-Iqbal Stop", "latitude": 24.9180, "longitude": 67.0971, "isOffice": False},
+    {"id": "d3", "name": "Clifton Stop", "latitude": 24.8138, "longitude": 67.0299, "isOffice": False},
+    {"id": "d4", "name": "Korangi Stop", "latitude": 24.8365, "longitude": 67.1310, "isOffice": False},
+    {"id": "d5", "name": "Saddar Stop", "latitude": 24.8568, "longitude": 67.0185, "isOffice": False},
 ]
 
 
 def test_haversine_and_matrix_caching():
     clear_matrix_cache()
-    d = haversine_km(30.2672, -97.7431, 30.3075, -97.7422)
+    d = haversine_km(24.8607, 67.0644, 24.9010, 67.0644)
     assert 4.0 < d < 5.0
 
     m1 = build_local_cost_matrix(SAMPLE_NODES, seed=42, distance_multiplier=1.25)
@@ -83,7 +83,7 @@ def test_hand_checkable_4_node_graph():
 
 def test_exact_search_cap_beyond_12_distributors():
     large_nodes = [
-        {"id": f"n{i}", "name": f"Node {i}", "latitude": 30.2 + i * 0.01, "longitude": -97.7 - i * 0.01, "isOffice": i == 0}
+        {"id": f"n{i}", "name": f"Node {i}", "latitude": 24.8 + i * 0.01, "longitude": 67.0 + i * 0.01, "isOffice": i == 0}
         for i in range(14)
     ]
     matrix = build_local_cost_matrix(large_nodes, seed=10, distance_multiplier=1.1)

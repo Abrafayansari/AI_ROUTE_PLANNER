@@ -16,13 +16,20 @@ def redact_secrets(text: str) -> str:
     return _DB_URL_SECRET_RE.sub("[REDACTED_DATABASE_URL]", str(text or ""))
 
 
+def is_postgresql_uri(uri: str | None) -> bool:
+    return bool(uri and uri.strip().lower().startswith("postgresql"))
+
+
 def normalize_sqlalchemy_database_url(raw_url: str | None) -> str | None:
-    """Normalize Neon PostgreSQL URL for SQLAlchemy + psycopg v3."""
+    """Normalize Neon PostgreSQL URL for SQLAlchemy + psycopg v3 while preserving SQLite URIs."""
     if not raw_url:
         return None
     cleaned = raw_url.strip()
     if not cleaned:
         return None
+
+    if cleaned.lower().startswith("sqlite:"):
+        return cleaned
 
     if cleaned.startswith("postgres://"):
         cleaned = "postgresql+psycopg://" + cleaned[len("postgres://") :]
@@ -44,6 +51,17 @@ def normalize_sqlalchemy_database_url(raw_url: str | None) -> str | None:
     return urlunparse(parsed._replace(query=new_query))
 
 
+def build_engine_options(uri: str | None, configured: bool) -> dict:
+    if configured and is_postgresql_uri(uri):
+        return {
+            "pool_pre_ping": True,
+            "pool_recycle": 300,
+            "pool_size": 5,
+            "max_overflow": 5,
+        }
+    return {}
+
+
 class Config:
     FLASK_ENV: str = os.getenv("FLASK_ENV", "development")
     PORT: int = int(os.getenv("PORT", "5000"))
@@ -53,15 +71,8 @@ class Config:
     )
     DATABASE_CONFIGURED: bool = bool(RAW_DATABASE_URL and RAW_DATABASE_URL.strip())
     SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
-    SQLALCHEMY_ENGINE_OPTIONS: dict = (
-        {
-            "pool_pre_ping": True,
-            "pool_recycle": 300,
-            "pool_size": 5,
-            "max_overflow": 5,
-        }
-        if DATABASE_CONFIGURED
-        else {}
+    SQLALCHEMY_ENGINE_OPTIONS: dict = build_engine_options(
+        SQLALCHEMY_DATABASE_URI, DATABASE_CONFIGURED
     )
     CORS_ORIGINS: list[str] = [
         origin.strip()

@@ -104,7 +104,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <div className="rounded-lg border border-slate-200 bg-white p-6">
           <h3 className="text-base font-semibold text-slate-900">Workspace Capabilities</h3>
           <p className="mt-1 text-sm text-slate-600">
-            Once connected to Neon PostgreSQL, the Python Flask backend runs all search, clustering, and scheduling algorithms server-side with zero external map APIs.
+            Once connected to PostgreSQL, the Python Flask backend runs all search, clustering, scheduling, and Bayesian inference algorithms server-side with zero external routing APIs.
           </p>
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="border-t border-slate-100 pt-3">
@@ -120,9 +120,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </p>
             </div>
             <div className="border-t border-slate-100 pt-3">
-              <p className="text-sm font-semibold text-slate-900">Week 12 · K-Means & Schematic Plot</p>
+              <p className="text-sm font-semibold text-slate-900">Week 12 & 14 · K-Means & Bayesian Net</p>
               <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                Partition distributor coordinates into geographic clusters on a self-contained SVG plot rendered locally from latitude and longitude.
+                Partition distributor coordinates into geographic clusters on Leaflet/SVG maps and estimate visit delay risk via exact Bayesian inference.
               </p>
             </div>
           </div>
@@ -162,11 +162,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   }
 
   const counts = summary?.counts ?? {
+    totalOffices: 0,
     totalDistributors: 0,
     activeDistributors: 0,
     demoDistributors: 0,
     totalRoutePlans: 0,
     scheduledOrCompletedPlans: 0,
+    totalScheduledVisits: 0,
     avgDistanceKm: null,
     avgDurationMinutes: null,
   };
@@ -183,7 +185,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 Empty Workspace — Start With Sample Data or Your Own Records
               </h2>
               <p className="mt-1 text-sm text-slate-600">
-                Your Neon PostgreSQL database is connected and initialized with zero rows. Load the fictional 9-distributor demo dataset or create your own office and distributors.
+                Your database is connected and initialized with zero rows. Load the Karachi 9-distributor demo dataset or create your own office and distributors.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -215,7 +217,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {counts.activeDistributors}
           </p>
           <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            {counts.totalDistributors} total stored · {counts.demoDistributors} demo
+            {counts.totalDistributors} total · {counts.totalOffices ?? 0} office(s) · {counts.demoDistributors} demo
           </p>
         </div>
 
@@ -225,7 +227,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {counts.totalRoutePlans}
           </p>
           <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            {counts.scheduledOrCompletedPlans} optimized / scheduled
+            {counts.scheduledOrCompletedPlans} optimized · {counts.totalScheduledVisits ?? 0} scheduled visits
           </p>
         </div>
 
@@ -238,11 +240,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-5">
-          <p className="text-xs font-medium text-slate-500">Avg. Simulated Travel Time</p>
+          <p className="text-xs font-medium text-slate-500">Delay Risk Predictions</p>
           <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-slate-900">
-            {counts.avgDurationMinutes !== null ? `${counts.avgDurationMinutes} min` : '—'}
+            {summary?.delayPredictionSummary?.totalPredictions ?? 0}
           </p>
-          <p className="mt-1 text-xs text-slate-500">Excludes visit durations</p>
+          <p className="mt-1 text-xs text-slate-500 tabular-nums">
+            {summary?.delayPredictionSummary
+              ? `${summary.delayPredictionSummary.lowRiskCount} Low · ${summary.delayPredictionSummary.mediumRiskCount} Med · ${summary.delayPredictionSummary.highRiskCount} High`
+              : counts.avgDurationMinutes !== null
+                ? `${counts.avgDurationMinutes} min avg travel`
+                : 'No evaluations yet'}
+          </p>
         </div>
       </div>
 
@@ -311,7 +319,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
           ) : (
             <div className="flex h-48 flex-col items-center justify-center text-center">
-              <p className="text-sm text-slate-600">No route plans saved in Neon yet.</p>
+              <p className="text-sm text-slate-600">No route plans saved in database yet.</p>
               <button
                 type="button"
                 onClick={() => navigate('/optimizer')}
@@ -378,7 +386,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       <div className="rounded-lg border border-slate-200 bg-white">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h3 className="text-base font-semibold text-slate-900">Recent Algorithm Comparisons</h3>
-          <span className="text-xs text-slate-500">Stored in Neon `algorithm_runs`</span>
+          <span className="text-xs text-slate-500">Stored in `algorithm_runs`</span>
         </div>
         {summary && summary.recentAlgorithmRuns.length > 0 ? (
           <div className="overflow-x-auto">

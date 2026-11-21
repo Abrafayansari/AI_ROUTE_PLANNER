@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 import uuid
-from sqlalchemy.dialects.postgresql import UUID
 
 from app.extensions import db
+from app.models.types import PortableBigIntPK, PortableUUID
 
 
 def _iso(val: datetime | date | str | None) -> str | None:
@@ -21,7 +21,7 @@ class FieldOfficer(db.Model):
     __tablename__ = "field_officers"
 
     id = db.Column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+        PortableUUID, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     name = db.Column(db.String(140), nullable=False)
     email = db.Column(db.String(180), unique=True, nullable=True)
@@ -49,17 +49,17 @@ class RoutePlan(db.Model):
     __tablename__ = "route_plans"
 
     id = db.Column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+        PortableUUID, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     name = db.Column(db.String(180), nullable=False)
     plan_date = db.Column(db.Date, nullable=False)
     officer_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("field_officers.id", ondelete="SET NULL"),
         nullable=True,
     )
     office_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("office_locations.id", ondelete="RESTRICT"),
         nullable=False,
     )
@@ -69,11 +69,11 @@ class RoutePlan(db.Model):
     selected_algorithm = db.Column(db.String(50), nullable=True)
     total_distance_km = db.Column(db.Float, nullable=False, default=0.0)
     total_duration_minutes = db.Column(db.Integer, nullable=False, default=0)
-    distance_multiplier = db.Column(db.Float, nullable=False, default=1.25)
+    distance_multiplier = db.Column(db.Float, nullable=False, default=1.0)
     graph_seed = db.Column(db.Integer, nullable=False, default=42)
     status = db.Column(db.String(30), nullable=False, default="draft")
     map_provider = db.Column(db.String(40), nullable=False, default="simulated")
-    notes = db.Column(db.Text, nullable=False, default="")
+    notes = db.Column(db.Text, nullable=True, default="")
     is_demo = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
         db.DateTime(timezone=True),
@@ -110,8 +110,8 @@ class RoutePlan(db.Model):
             "selected_algorithm": self.selected_algorithm,
             "total_distance_km": float(self.total_distance_km or 0.0),
             "total_duration_minutes": int(round(float(self.total_duration_minutes or 0))),
-            "distance_multiplier": float(self.distance_multiplier or 1.25),
-            "graph_seed": int(self.graph_seed or 42),
+            "distance_multiplier": float(self.distance_multiplier if self.distance_multiplier is not None else 1.0),
+            "graph_seed": int(self.graph_seed if self.graph_seed is not None else 42),
             "status": self.status,
             "map_provider": self.map_provider,
             "notes": self.notes or "",
@@ -131,7 +131,7 @@ class RoutePlan(db.Model):
 class ApiRequestLog(db.Model):
     __tablename__ = "api_request_logs"
 
-    id = db.Column(db.BigInteger, primary_key=True)
+    id = db.Column(PortableBigIntPK, primary_key=True, autoincrement=True)
     provider = db.Column(db.String(60), nullable=False)
     endpoint = db.Column(db.String(160), nullable=False)
     status_code = db.Column(db.Integer, nullable=True)

@@ -16,11 +16,11 @@ interface OptimizerPageProps {
   onNotify: (kind: 'success' | 'error', text: string) => void;
 }
 
-const FIXED_DISTANCE_MULTIPLIER = 1;
-const FIXED_GRAPH_SEED = 42;
-const FIXED_GA_POPULATION_SIZE = 80;
-const FIXED_GA_GENERATIONS = 150;
-const FIXED_GA_MUTATION_RATE = 0.18;
+const DEFAULT_DISTANCE_MULTIPLIER = 1.0;
+const DEFAULT_GRAPH_SEED = 42;
+const DEFAULT_GA_POPULATION_SIZE = 80;
+const DEFAULT_GA_GENERATIONS = 150;
+const DEFAULT_GA_MUTATION_RATE = 0.18;
 
 export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
   const navigate = useNavigate();
@@ -33,6 +33,13 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
   const [planDate, setPlanDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [travelMode, setTravelMode] = useState<'simulated_vehicle' | 'simulated_van' | 'simulated_walking'>('simulated_vehicle');
   const [returnToOffice, setReturnToOffice] = useState(true);
+
+  const [seed, setSeed] = useState(DEFAULT_GRAPH_SEED);
+  const [distanceMultiplier, setDistanceMultiplier] = useState(DEFAULT_DISTANCE_MULTIPLIER);
+  const [gaPopulationSize, setGaPopulationSize] = useState(DEFAULT_GA_POPULATION_SIZE);
+  const [gaGenerations, setGaGenerations] = useState(DEFAULT_GA_GENERATIONS);
+  const [gaMutationRate, setGaMutationRate] = useState(DEFAULT_GA_MUTATION_RATE);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -79,13 +86,13 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
       const res = await api.previewOptimization({
         officeId,
         distributorIds: selectedIds,
-        seed: FIXED_GRAPH_SEED,
-        distanceMultiplier: FIXED_DISTANCE_MULTIPLIER,
+        seed,
+        distanceMultiplier,
         travelMode,
         returnToOffice,
-        gaPopulationSize: FIXED_GA_POPULATION_SIZE,
-        gaGenerations: FIXED_GA_GENERATIONS,
-        gaMutationRate: FIXED_GA_MUTATION_RATE,
+        gaPopulationSize,
+        gaGenerations,
+        gaMutationRate,
       });
       setPreview(res.data);
       if (res.data.recommendedAlgorithm) {
@@ -113,22 +120,22 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
         distributorIds: selectedIds,
         travelMode,
         returnToOffice,
-        distanceMultiplier: FIXED_DISTANCE_MULTIPLIER,
-        graphSeed: FIXED_GRAPH_SEED,
+        distanceMultiplier,
+        graphSeed: seed,
       });
       const planId = createRes.data.id;
       await api.optimizeRoutePlan(planId, {
         distributorIds: selectedIds,
         selectedAlgorithm: activeAlgo,
-        seed: FIXED_GRAPH_SEED,
-        distanceMultiplier: FIXED_DISTANCE_MULTIPLIER,
+        seed,
+        distanceMultiplier,
         returnToOffice,
         travelMode,
-        gaPopulationSize: FIXED_GA_POPULATION_SIZE,
-        gaGenerations: FIXED_GA_GENERATIONS,
-        gaMutationRate: FIXED_GA_MUTATION_RATE,
+        gaPopulationSize,
+        gaGenerations,
+        gaMutationRate,
       });
-      onNotify('success', 'Route plan, stops, and all 4 algorithm comparisons saved to Neon PostgreSQL.');
+      onNotify('success', 'Route plan, stops, and all 4 algorithm comparisons saved to database.');
       navigate(`/saved-plans/${planId}`);
     } catch (err) {
       onNotify('error', err instanceof Error ? err.message : 'Failed to save route plan');
@@ -183,6 +190,9 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
     preview && activeResult?.completed
       ? activeResult.routeOrder.map((idx) => preview.nodes[idx]?.id).filter(Boolean)
       : [];
+
+  const activeDelayPredictions =
+    preview?.delayPredictionsByAlgorithm?.[activeAlgo] ?? preview?.delayPredictions ?? [];
 
   return (
     <div className="space-y-6">
@@ -314,6 +324,102 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
             </div>
           </div>
 
+          <div className="rounded-md border border-slate-200 bg-slate-50/70 p-3">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="text-xs font-semibold text-slate-700 hover:text-slate-900"
+              >
+                {showAdvanced ? '▾ Hide Advanced Optimizer Settings' : '▸ Advanced Optimizer Settings'}
+              </button>
+              <span className="font-mono text-[11px] text-slate-500">
+                Seed {seed} · ×{distanceMultiplier}
+              </span>
+            </div>
+
+            {showAdvanced && (
+              <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700">Graph Seed</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1000000}
+                      value={seed}
+                      onChange={(e) => setSeed(Number(e.target.value))}
+                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700">Dist. Multiplier</label>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={3.0}
+                      step={0.05}
+                      value={distanceMultiplier}
+                      onChange={(e) => setDistanceMultiplier(Number(e.target.value))}
+                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700">GA Pop</label>
+                    <input
+                      type="number"
+                      min={10}
+                      max={500}
+                      value={gaPopulationSize}
+                      onChange={(e) => setGaPopulationSize(Number(e.target.value))}
+                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700">GA Gens</label>
+                    <input
+                      type="number"
+                      min={10}
+                      max={1000}
+                      value={gaGenerations}
+                      onChange={(e) => setGaGenerations(Number(e.target.value))}
+                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700">Mutation</label>
+                    <input
+                      type="number"
+                      min={0.01}
+                      max={0.95}
+                      step={0.01}
+                      value={gaMutationRate}
+                      onChange={(e) => setGaMutationRate(Number(e.target.value))}
+                      className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSeed(DEFAULT_GRAPH_SEED);
+                      setDistanceMultiplier(DEFAULT_DISTANCE_MULTIPLIER);
+                      setGaPopulationSize(DEFAULT_GA_POPULATION_SIZE);
+                      setGaGenerations(DEFAULT_GA_GENERATIONS);
+                      setGaMutationRate(DEFAULT_GA_MUTATION_RATE);
+                    }}
+                    className="text-[11px] font-medium text-blue-600 hover:text-blue-700"
+                  >
+                    Reset Defaults (42 / 1.0 / 80 / 150 / 0.18)
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             type="submit"
             disabled={running || !officeId || selectedIds.length === 0}
@@ -383,10 +489,10 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="text-base font-semibold text-slate-900">
-                    Algorithm Comparison Matrix (Same Graph & Seed {preview.matrix.seed})
+                    Algorithm Comparison Matrix (Seed {preview.matrix.seed} · Multiplier {preview.matrix.distanceMultiplier}x)
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Recommended: <span className="font-mono font-semibold text-emerald-700">{preview.recommendedAlgorithm}</span> (lowest simulated travel distance among valid completed tours) · Click a row to preview its route
+                    Recommended: <span className="font-mono font-semibold text-emerald-700">{preview.recommendedAlgorithm}</span> · GA (Pop {preview.appliedConfig?.gaPopulationSize ?? gaPopulationSize}, Gens {preview.appliedConfig?.gaGenerations ?? gaGenerations}, Mut {preview.appliedConfig?.gaMutationRate ?? gaMutationRate}) · Click a row to preview its route
                   </p>
                 </div>
                 <button
@@ -396,7 +502,7 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                   className="inline-flex items-center gap-2 whitespace-nowrap shrink-0 rounded-md bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  {saving ? 'Saving to Neon...' : `Save Plan (${activeAlgo}) to Neon`}
+                  {saving ? 'Saving...' : `Save Plan (${activeAlgo})`}
                 </button>
               </div>
 
@@ -500,8 +606,8 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                 </div>
               )}
 
-              {/* Bayesian Delay Risk Assessment for the Optimized Tour */}
-              {preview.delayPredictions && preview.delayPredictions.length > 0 && (
+              {/* Bayesian Delay Risk Assessment for the Active Algorithm Tour */}
+              {activeDelayPredictions.length > 0 && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
@@ -533,7 +639,7 @@ export const OptimizerPage: React.FC<OptimizerPageProps> = ({ onNotify }) => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {preview.delayPredictions.map((pred, i) => (
+                        {activeDelayPredictions.map((pred, i) => (
                           <tr key={i} className="hover:bg-slate-50/70">
                             <td className="px-3 py-1.5 font-mono font-semibold text-slate-700">
                               #{pred.stopOrder ?? i + 1}

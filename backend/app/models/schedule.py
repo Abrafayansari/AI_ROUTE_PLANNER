@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy.dialects.postgresql import UUID
 
 from app.extensions import db
+from app.models.types import PortableUUID
 
 
 def _iso(val: datetime | str | None) -> str | None:
@@ -19,15 +19,15 @@ class ScheduleEntry(db.Model):
     __tablename__ = "schedule_entries"
 
     id = db.Column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+        PortableUUID, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     route_plan_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("route_plans.id", ondelete="CASCADE"),
         nullable=False,
     )
     distributor_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("distributors.id", ondelete="SET NULL"),
         nullable=True,
     )

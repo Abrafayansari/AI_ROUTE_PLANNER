@@ -79,8 +79,11 @@ def post_optimize_preview():
 @require_database
 def get_route_plans():
     try:
-        page = max(1, int(request.args.get("page") or 1))
-        page_size = min(50, max(1, int(request.args.get("pageSize") or 20)))
+        try:
+            page = max(1, int(request.args.get("page") or 1))
+            page_size = min(50, max(1, int(request.args.get("pageSize") or 20)))
+        except ValueError:
+            return fail(400, "VALIDATION_ERROR", "page and pageSize must be integers.")
         data = list_route_plans(page=page, page_size=page_size)
         return ok(data)
     except Exception:

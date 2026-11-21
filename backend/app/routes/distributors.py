@@ -16,6 +16,13 @@ from app.utils.validation import DistributorInput, is_valid_uuid
 distributors_bp = Blueprint("distributors", __name__)
 
 
+def _sanitize_csv_cell(value: str | None) -> str:
+    text_val = value or ""
+    if text_val and text_val[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return f"'{text_val}"
+    return text_val
+
+
 @distributors_bp.get("/distributors/export")
 @require_database
 def export_distributors():
@@ -47,11 +54,11 @@ def export_distributors():
         for r in rows:
             writer.writerow(
                 [
-                    r.name,
-                    r.contact_person,
-                    r.phone,
-                    r.email or "",
-                    r.address,
+                    _sanitize_csv_cell(r.name),
+                    _sanitize_csv_cell(r.contact_person),
+                    _sanitize_csv_cell(r.phone),
+                    _sanitize_csv_cell(r.email),
+                    _sanitize_csv_cell(r.address),
                     r.latitude,
                     r.longitude,
                     r.priority,
@@ -59,7 +66,7 @@ def export_distributors():
                     r.opening_time,
                     r.closing_time,
                     "true" if r.is_active else "false",
-                    r.notes or "",
+                    _sanitize_csv_cell(r.notes),
                 ]
             )
         return Response(
@@ -81,6 +88,8 @@ def import_distributors():
     csv_text = body.get("csv") if isinstance(body.get("csv"), str) else ""
     if not csv_text.strip():
         return fail(400, "VALIDATION_ERROR", "CSV content is empty.")
+    if len(csv_text.encode("utf-8")) > 256 * 1024:
+        return fail(400, "VALIDATION_ERROR", "CSV payload exceeds 256 KB size limit.")
 
     lines = [line.strip() for line in csv_text.splitlines() if line.strip()]
     if len(lines) < 2:
@@ -88,6 +97,12 @@ def import_distributors():
             400,
             "VALIDATION_ERROR",
             "CSV must include a header row and at least one data row.",
+        )
+    if len(lines) - 1 > 200:
+        return fail(
+            400,
+            "VALIDATION_ERROR",
+            "CSV import is capped at 200 rows per request.",
         )
 
     reader = csv.DictReader(io.StringIO("\n".join(lines)))
@@ -200,8 +215,11 @@ def list_distributors():
         active = request.args.get("active") or "all"
         sort_by = request.args.get("sortBy") or "priority"
         sort_dir = "asc" if request.args.get("sortDir") == "asc" else "desc"
-        page = max(1, int(request.args.get("page") or 1))
-        page_size = min(100, max(1, int(request.args.get("pageSize") or 50)))
+        try:
+            page = max(1, int(request.args.get("page") or 1))
+            page_size = min(100, max(1, int(request.args.get("pageSize") or 50)))
+        except ValueError:
+            return fail(400, "VALIDATION_ERROR", "page and pageSize must be integers.")
 
         query_obj = db.session.query(Distributor)
         if search:

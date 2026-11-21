@@ -22,6 +22,15 @@ const CLUSTER_COLORS = [
   '#4F46E5',
 ];
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
   points,
   centroids = [],
@@ -32,29 +41,30 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
+  const validPoints = points.filter(
+    (p) =>
+      typeof p.latitude === 'number' &&
+      typeof p.longitude === 'number' &&
+      !Number.isNaN(p.latitude) &&
+      !Number.isNaN(p.longitude)
+  );
 
-    // Fix default marker icon assets for Leaflet in Vite
-    // @ts-expect-error Leaflet icon hack
-    delete L.Icon.Default.prototype._getIconUrl;
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-    });
+  useEffect(() => {
+    if (!containerRef.current || validPoints.length === 0) {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+      return;
+    }
 
     if (mapRef.current) {
       mapRef.current.remove();
       mapRef.current = null;
     }
 
-    const validPoints = points.filter(
-      (p) => typeof p.latitude === 'number' && typeof p.longitude === 'number' && !isNaN(p.latitude) && !isNaN(p.longitude)
-    );
-
-    const defaultLat = validPoints.length > 0 ? validPoints[0].latitude : 30.2672;
-    const defaultLng = validPoints.length > 0 ? validPoints[0].longitude : -97.7431;
+    const defaultLat = validPoints[0].latitude;
+    const defaultLng = validPoints[0].longitude;
 
     const map = L.map(containerRef.current, {
       center: [defaultLat, defaultLng],
@@ -64,7 +74,6 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
     });
     mapRef.current = map;
 
-    // Add free OpenStreetMap tile layer (no API key needed)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
@@ -73,7 +82,6 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
     const pointMap = new Map(validPoints.map((p) => [p.id, p]));
     const bounds = L.latLngBounds([]);
 
-    // Plot Route Polylines
     if (routeOrderIds.length > 1) {
       const latlngs: L.LatLngExpression[] = [];
       routeOrderIds.forEach((id) => {
@@ -88,13 +96,11 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
           color: '#2563EB',
           weight: 4,
           opacity: 0.85,
-          dashArray: undefined,
           lineJoin: 'round',
         }).addTo(map);
       }
     }
 
-    // Add Cluster Centroids
     centroids.forEach((c) => {
       bounds.extend([c.centroidLat, c.centroidLng]);
       const color = CLUSTER_COLORS[c.clusterIndex % CLUSTER_COLORS.length];
@@ -107,10 +113,11 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
 
       L.marker([c.centroidLat, c.centroidLng], { icon: centroidIcon })
         .addTo(map)
-        .bindPopup(`<strong>${c.clusterLabel}</strong><br/>Centroid: ${c.centroidLat.toFixed(4)}, ${c.centroidLng.toFixed(4)}`);
+        .bindPopup(
+          `<strong>${escapeHtml(c.clusterLabel)}</strong><br/>Centroid: ${c.centroidLat.toFixed(4)}, ${c.centroidLng.toFixed(4)}`
+        );
     });
 
-    // Add Points (Office and Distributors)
     validPoints.forEach((p) => {
       bounds.extend([p.latitude, p.longitude]);
 
@@ -125,7 +132,7 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
       if (p.isOffice) {
         markerIcon = L.divIcon({
           className: 'custom-office-marker',
-          html: `<div style="background-color: #0F172A; width: 28px; height: 28px; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.3); color: white; font-size: 11px; font-weight: bold;">🏢</div>`,
+          html: `<div style="background-color: #0F172A; width: 28px; height: 28px; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.3); color: white; font-size: 11px; font-weight: bold;">HQ</div>`,
           iconSize: [28, 28],
           iconAnchor: [14, 14],
         });
@@ -139,18 +146,20 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
 
         markerIcon = L.divIcon({
           className: 'custom-distributor-marker',
-          html: `<div style="background-color: ${clusterColor}; width: 26px; height: 26px; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.3); color: white; font-size: 10px; font-weight: bold; font-family: monospace;">${stopLabel}</div>`,
+          html: `<div style="background-color: ${clusterColor}; width: 26px; height: 26px; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.3); color: white; font-size: 10px; font-weight: bold; font-family: monospace;">${escapeHtml(stopLabel)}</div>`,
           iconSize: [26, 26],
           iconAnchor: [13, 13],
         });
       }
 
+      const safeName = escapeHtml(p.name);
+      const safeStatus = p.status ? escapeHtml(p.status) : '';
       const popupHtml = `
         <div style="font-size: 12px; line-height: 1.4;">
-          <strong>${p.name}</strong> ${p.isOffice ? '<span style="color: #64748B;">(Base Office)</span>' : ''}<br/>
+          <strong>${safeName}</strong> ${p.isOffice ? '<span style="color: #64748B;">(Base Office)</span>' : ''}<br/>
           <span>Coordinates: ${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</span><br/>
           ${p.priority ? `<span>Priority: ${p.priority}/5</span><br/>` : ''}
-          ${p.status ? `<span>Status: <strong style="text-transform: capitalize;">${p.status}</strong></span><br/>` : ''}
+          ${safeStatus ? `<span>Status: <strong style="text-transform: capitalize;">${safeStatus}</strong></span><br/>` : ''}
           ${stopNumbers.length > 0 ? `<span style="color: #2563EB; font-weight: 600;">Stop Sequence: #${stopNumbers.join(', ')}</span>` : ''}
         </div>
       `;
@@ -160,9 +169,7 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
         .bindPopup(popupHtml);
     });
 
-    if (validPoints.length > 0) {
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
-    }
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
 
     return () => {
       if (mapRef.current) {
@@ -172,13 +179,27 @@ export const LeafletRouteMap: React.FC<LeafletRouteMapProps> = ({
     };
   }, [points, centroids, routeOrderIds]);
 
+  if (validPoints.length === 0) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white p-6">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+          <span className="text-xs text-slate-500">OpenStreetMap Leaflet · Simulated routes</span>
+        </div>
+        <div className="flex h-64 items-center justify-center text-sm text-slate-500">
+          Add an office or distributor coordinates to render the interactive Leaflet map.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
           <p className="text-xs text-slate-500">
-            Interactive OpenStreetMap Leaflet visualization · Drag, zoom, and click pins for stop details
+            Straight-line simulated legs rendered on OpenStreetMap Leaflet basemap · Click pins for stop details
           </p>
         </div>
         <div className="flex items-center gap-4 text-xs text-slate-600">

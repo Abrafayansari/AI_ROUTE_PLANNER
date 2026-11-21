@@ -123,18 +123,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
 
           <div className="rounded-md border border-slate-200 p-4">
-            <p className="text-xs text-slate-500">Schema Tables (9 Required)</p>
+            <p className="text-xs text-slate-500">
+              Schema Tables ({((dbHealth ? dbHealth.existingTables.length + dbHealth.missingTables.length : 0) || 10)} Required)
+            </p>
             <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
               {dbHealth?.schemaReady ? (
                 <>
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span className="text-emerald-700">All 9 Ready</span>
+                  <span className="text-emerald-700">
+                    All {((dbHealth.existingTables.length + dbHealth.missingTables.length) || 10)} Ready
+                  </span>
                 </>
               ) : (
                 <>
                   <XCircle className="h-4 w-4 text-amber-600" />
                   <span className="text-amber-700">
-                    {dbHealth?.existingTables.length ?? 0} / 9 Present
+                    {dbHealth?.existingTables.length ?? 0} / {((dbHealth ? dbHealth.existingTables.length + dbHealth.missingTables.length : 0) || 10)} Present
                   </span>
                 </>
               )}
@@ -201,7 +205,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </li>
         </ol>
         <p className="border-t border-slate-100 pt-3 text-xs text-slate-500">
-          Workspace access note: This app operates as a single-user/demo operations workspace with no fake login wall. No external map API keys or third-party mapping services are used.
+          Workspace access note: This app operates as a single-user/demo operations workspace with no fake login wall. No external routing or geocoding API keys are required (Leaflet loads free OpenStreetMap basemap tiles client-side).
         </p>
       </div>
 

@@ -90,7 +90,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         <div className="border-t border-slate-200 p-4 text-xs text-slate-500">
           <p className="font-medium text-slate-700">Python Flask + React Stack</p>
-          <p className="mt-0.5">Local coordinates · No map API</p>
+          <p className="mt-0.5">Local coordinates · OSM Leaflet / Simulated routing</p>
         </div>
       </aside>
 
@@ -169,7 +169,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 }`}
               />
               {dbHealth?.connected && dbHealth?.schemaReady
-                ? 'Neon Connected'
+                ? 'DB Connected'
                 : dbHealth?.connected
                   ? 'Schema Needed'
                   : 'DB Disconnected'}

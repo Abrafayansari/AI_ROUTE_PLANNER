@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AlertTriangle, CalendarClock, Play, ShieldAlert, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
-import type { CspRunResult, Distributor } from '../types';
+import type { CspRunResult, Distributor, OfficeLocation } from '../types';
 
 interface SchedulingPageProps {
   onNotify: (kind: 'success' | 'error', text: string) => void;
@@ -15,6 +15,8 @@ function toMins(hhmm: string): number {
 
 export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
   const navigate = useNavigate();
+  const [offices, setOffices] = useState<OfficeLocation[]>([]);
+  const [officeId, setOfficeId] = useState<string>('');
   const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -36,10 +38,14 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
     const load = async () => {
       setLoading(true);
       try {
-        const [distRes, latestSchedRes] = await Promise.all([
+        const [offRes, distRes, latestSchedRes] = await Promise.all([
+          api.getOffices(),
           api.getDistributors({ active: 'true', pageSize: 100 }),
           api.getLatestSchedule(),
         ]);
+        setOffices(offRes.data.offices);
+        const defOffice = offRes.data.defaultOffice || offRes.data.offices[0];
+        setOfficeId(latestSchedRes.data?.officeId || defOffice?.id || '');
         setDistributors(distRes.data.items);
         setSelectedIds(distRes.data.items.map((d) => d.id));
 
@@ -62,6 +68,8 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
 
           setResult({
             routePlanId: latestSchedRes.data.routePlanId,
+            officeId: latestSchedRes.data.officeId,
+            officeName: latestSchedRes.data.officeName,
             scheduleDate: schedDate,
             allDistributorsScheduled: unscheduledList.length === 0,
             usesFixedTravelBuffer: true,
@@ -77,11 +85,17 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
               bufferMinutes: travelBufferMinutes,
               openingTime: e.opening_time,
               closingTime: e.closing_time,
+              distanceKm: e.distanceKm,
+              delayRisk: e.delayRisk,
+              delayProbabilities: e.delayProbabilities,
+              recommendedBufferMinutes: e.recommendedBufferMinutes,
+              delayAdvisory: e.delayAdvisory,
             })),
             unscheduled: unscheduledList,
             backtracks: 0,
             executionTimeMs: 0,
-            constraintsSummary: entries[0].constraint_notes || 'Loaded from Neon PostgreSQL',
+            constraintsSummary: entries[0].constraint_notes || 'Loaded from database',
+            bayesianAdvisory: latestSchedRes.data.bayesianAdvisory,
           });
         }
       } catch (err) {
@@ -108,6 +122,7 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
     try {
       const res = await api.runSchedule({
         distributorIds: selectedIds,
+        officeId: officeId || undefined,
         scheduleDate,
         workStartTime,
         workEndTime,
@@ -153,15 +168,32 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
         >
           <h3 className="text-base font-semibold text-slate-900">Schedule Constraints</h3>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-700">Schedule Date</label>
-            <input
-              type="date"
-              required
-              value={scheduleDate}
-              onChange={(e) => setScheduleDate(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-1.5 font-mono text-sm"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700">Schedule Date</label>
+              <input
+                type="date"
+                required
+                value={scheduleDate}
+                onChange={(e) => setScheduleDate(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-200 px-2.5 py-1.5 font-mono text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700">Base Office</label>
+              <select
+                value={officeId}
+                onChange={(e) => setOfficeId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+              >
+                {offices.length === 0 && <option value="">No office configured</option>}
+                {offices.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -331,6 +363,7 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
                       Daily Schedule Timeline ({result.scheduleDate})
                     </h3>
                     <p className="text-xs text-slate-500">
+                      {result.officeName ? `From ${result.officeName} · ` : ''}
                       {result.scheduled.length} scheduled · {result.unscheduled.length} unscheduled ·{' '}
                       {result.backtracks} backtrack(s) · {result.executionTimeMs} ms
                     </p>

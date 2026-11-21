@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from flask import Flask, g, request
 
-from app.config import Config, redact_secrets
+from app.config import Config, build_engine_options, redact_secrets
 from app.extensions import cors, db, migrate
 from app.routes import (
     clustering_bp,
@@ -23,6 +23,12 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     flask_app.config.from_object(Config)
     if config_overrides:
         flask_app.config.update(config_overrides)
+
+    if not config_overrides or "SQLALCHEMY_ENGINE_OPTIONS" not in config_overrides:
+        flask_app.config["SQLALCHEMY_ENGINE_OPTIONS"] = build_engine_options(
+            flask_app.config.get("SQLALCHEMY_DATABASE_URI"),
+            bool(flask_app.config.get("DATABASE_CONFIGURED")),
+        )
 
     db.init_app(flask_app)
     migrate.init_app(flask_app, db, directory="migrations")
@@ -48,7 +54,12 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         g.req_start_t = time.perf_counter()
 
     @flask_app.after_request
-    def _log_request(response):
+    def _log_request_and_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        if request.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+
         if (
             flask_app.config.get("DATABASE_CONFIGURED")
             and not flask_app.config.get("TESTING")
@@ -85,8 +96,8 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         with flask_app.app_context():
             try:
                 res = apply_migrations_idempotently()
-                print(f"Neon schema verified: {', '.join(res['applied'])}")
+                print(f"Database schema verified: {', '.join(res['applied'])}")
             except Exception as exc:
-                print(f"Neon startup schema check skipped: {redact_secrets(str(exc))}")
+                print(f"Startup schema check skipped: {redact_secrets(str(exc))}")
 
     return flask_app

@@ -93,6 +93,8 @@ export const api = {
     id: string,
     body: Omit<OfficeLocation, 'id' | 'is_demo' | 'created_at' | 'updated_at'>
   ) => request<OfficeLocation>({ url: `/api/office/${id}`, method: 'PUT', data: body }),
+  deleteOffice: (id: string) =>
+    request<{ id: string }>({ url: `/api/office/${id}`, method: 'DELETE' }),
 
   getDistributors: (
     params: {
@@ -139,6 +141,7 @@ export const api = {
 
   runSchedule: (body: {
     distributorIds: string[];
+    officeId?: string | null;
     scheduleDate: string;
     workStartTime: string;
     workEndTime: string;
@@ -153,7 +156,10 @@ export const api = {
   getLatestSchedule: () =>
     request<{
       routePlanId: string;
+      officeId?: string | null;
+      officeName?: string | null;
       scheduleDate: string;
+      bayesianAdvisory?: CspRunResult['bayesianAdvisory'];
       entries: Array<{
         id: string;
         distributor_id: string;
@@ -166,6 +172,11 @@ export const api = {
         closing_time: string;
         schedule_date: string;
         constraint_notes: string;
+        distanceKm?: number;
+        delayRisk?: 'Low' | 'Medium' | 'High';
+        delayProbabilities?: { Low: number; Medium: number; High: number };
+        recommendedBufferMinutes?: number;
+        delayAdvisory?: string;
       }>;
     } | null>({ url: '/api/schedules/latest', method: 'GET' }),
 

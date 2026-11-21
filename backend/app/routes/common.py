@@ -33,13 +33,31 @@ def pydantic_error_response(exc):
 def rate_limit(max_requests: int = 60, window_seconds: float = 60.0):
     hits: dict[str, list[float]] = {}
 
+    def _client_key() -> str:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            first_ip = forwarded.split(",")[0].strip()
+            if first_ip:
+                return first_ip
+        return request.remote_addr or "local"
+
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            key = request.remote_addr or "local"
             now = time.monotonic()
+            # Prune stale keys periodically to bound memory
+            if len(hits) > 512:
+                stale_keys = [
+                    k for k, ts_list in hits.items()
+                    if not any(now - ts < window_seconds for ts in ts_list)
+                ]
+                for sk in stale_keys:
+                    hits.pop(sk, None)
+
+            key = _client_key()
             recent = [ts for ts in hits.get(key, []) if now - ts < window_seconds]
             if len(recent) >= max_requests:
+                hits[key] = recent
                 return fail(
                     429,
                     "RATE_LIMIT_EXCEEDED",

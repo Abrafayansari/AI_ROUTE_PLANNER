@@ -71,12 +71,12 @@ CREATE TABLE IF NOT EXISTS route_plans (
         CHECK (selected_algorithm IS NULL OR selected_algorithm IN ('BFS', 'UCS', 'A*', 'GENETIC_ALGORITHM')),
     total_distance_km DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (total_distance_km >= 0),
     total_duration_minutes INTEGER NOT NULL DEFAULT 0 CHECK (total_duration_minutes >= 0),
-    distance_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.25 CHECK (distance_multiplier >= 1.0 AND distance_multiplier <= 3.0),
+    distance_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0 CHECK (distance_multiplier >= 1.0 AND distance_multiplier <= 3.0),
     graph_seed INTEGER NOT NULL DEFAULT 42,
     status VARCHAR(30) NOT NULL DEFAULT 'draft'
         CHECK (status IN ('draft', 'optimized', 'scheduled', 'in_progress', 'completed')),
     map_provider VARCHAR(40) NOT NULL DEFAULT 'simulated',
-    notes TEXT,
+    notes TEXT DEFAULT '',
     is_demo BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -164,6 +164,30 @@ CREATE TABLE IF NOT EXISTS api_request_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 10. Visit Delay Predictions (Discrete Bayesian Network Inference Records)
+CREATE TABLE IF NOT EXISTS visit_delay_predictions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    route_plan_id UUID REFERENCES route_plans(id) ON DELETE CASCADE,
+    distributor_id UUID REFERENCES distributors(id) ON DELETE SET NULL,
+    distributor_name VARCHAR(180) NOT NULL,
+    stop_order INTEGER,
+    distance_km DOUBLE PRECISION,
+    distance_category VARCHAR(20) NOT NULL,
+    visit_duration_minutes INTEGER,
+    visit_duration_category VARCHAR(20) NOT NULL,
+    time_slot VARCHAR(20) NOT NULL,
+    priority_category VARCHAR(20) NOT NULL,
+    probability_low DOUBLE PRECISION NOT NULL,
+    probability_medium DOUBLE PRECISION NOT NULL,
+    probability_high DOUBLE PRECISION NOT NULL,
+    predicted_risk VARCHAR(20) NOT NULL,
+    recommended_buffer_minutes INTEGER NOT NULL DEFAULT 0,
+    recommendation_note TEXT,
+    model_version VARCHAR(40) NOT NULL DEFAULT '1.0.0-illustrative',
+    model_status VARCHAR(40) NOT NULL DEFAULT 'illustrative_baseline',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_distributors_active ON distributors(is_active);
 CREATE INDEX IF NOT EXISTS idx_distributors_coordinates ON distributors(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_route_plans_date ON route_plans(plan_date DESC);
@@ -172,5 +196,8 @@ CREATE INDEX IF NOT EXISTS idx_route_stops_plan_order ON route_stops(route_plan_
 CREATE INDEX IF NOT EXISTS idx_schedule_entries_plan_start ON schedule_entries(route_plan_id, scheduled_start);
 CREATE INDEX IF NOT EXISTS idx_algorithm_runs_plan ON algorithm_runs(route_plan_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_api_request_logs_created ON api_request_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_visit_delay_predictions_plan ON visit_delay_predictions(route_plan_id);
+CREATE INDEX IF NOT EXISTS idx_visit_delay_predictions_dist ON visit_delay_predictions(distributor_id);
+CREATE INDEX IF NOT EXISTS idx_visit_delay_predictions_created ON visit_delay_predictions(created_at);
 
 COMMIT;

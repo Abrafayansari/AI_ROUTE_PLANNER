@@ -127,6 +127,8 @@ export interface UnscheduledVisitReport {
 export interface CspRunResult {
   routePlanId?: string;
   scheduleRunId?: string;
+  officeId?: string | null;
+  officeName?: string | null;
   scheduleDate: string;
   allDistributorsScheduled: boolean;
   usesFixedTravelBuffer: boolean;
@@ -189,8 +191,18 @@ export interface OptimizePreviewResponse {
     travelMode: 'simulated_vehicle' | 'simulated_walking' | 'simulated_van';
   };
   recommendedAlgorithm: AlgorithmName | null;
+  appliedConfig?: {
+    seed: number;
+    distanceMultiplier: number;
+    travelMode: 'simulated_vehicle' | 'simulated_walking' | 'simulated_van';
+    returnToOffice: boolean;
+    gaPopulationSize: number;
+    gaGenerations: number;
+    gaMutationRate: number;
+  };
   results: AlgorithmComparisonItem[];
   delayPredictions?: BayesianPrediction[];
+  delayPredictionsByAlgorithm?: Partial<Record<AlgorithmName, BayesianPrediction[]>>;
 }
 
 export interface RoutePlanSummary {
@@ -281,11 +293,13 @@ export interface RoutePlanDetailPayload {
 
 export interface AnalyticsSummary {
   counts: {
+    totalOffices?: number;
     totalDistributors: number;
     activeDistributors: number;
     demoDistributors: number;
     totalRoutePlans: number;
     scheduledOrCompletedPlans: number;
+    totalScheduledVisits?: number;
     avgDistanceKm: number | null;
     avgDurationMinutes: number | null;
   };
@@ -311,6 +325,12 @@ export interface AnalyticsSummary {
     remainingActiveCount: number;
     scheduleDate: string | null;
   };
+  delayPredictionSummary?: {
+    totalPredictions: number;
+    lowRiskCount: number;
+    mediumRiskCount: number;
+    highRiskCount: number;
+  };
   plainLanguageSummary: string[];
 }
 
@@ -328,17 +348,19 @@ export interface BayesianPrediction {
     priorityRaw?: number | null;
   };
   distanceKm?: number | null;
-  distanceCategory?: 'Near' | 'Medium' | 'Far';
+  distanceCategory?: 'Near' | 'Medium' | 'Far' | 'Unobserved';
   visitDurationMinutes?: number | null;
-  visitDurationCategory?: 'Short' | 'Medium' | 'Long';
-  timeSlot?: 'Morning' | 'Afternoon';
-  priorityCategory?: 'Low' | 'Medium' | 'High';
+  visitDurationCategory?: 'Short' | 'Medium' | 'Long' | 'Unobserved';
+  timeSlot?: 'Morning' | 'Afternoon' | 'Unobserved';
+  priorityCategory?: 'Low' | 'Medium' | 'High' | 'Unobserved';
   evidence?: {
-    distanceCategory: 'Near' | 'Medium' | 'Far';
-    visitDurationCategory: 'Short' | 'Medium' | 'Long';
-    timeSlot: 'Morning' | 'Afternoon';
-    priorityCategory: 'Low' | 'Medium' | 'High';
+    distanceCategory: 'Near' | 'Medium' | 'Far' | 'Unobserved';
+    visitDurationCategory: 'Short' | 'Medium' | 'Long' | 'Unobserved';
+    timeSlot: 'Morning' | 'Afternoon' | 'Unobserved';
+    priorityCategory: 'Low' | 'Medium' | 'High' | 'Unobserved';
   };
+  isPartialEvidence?: boolean;
+  marginalizedVariables?: string[];
   probabilities: {
     Low: number;
     Medium: number;

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Play } from 'lucide-react';
+import { Map as MapIcon, Play } from 'lucide-react';
 import { api } from '../services/api';
+import { LeafletRouteMap } from '../components/LeafletRouteMap';
 import { SchematicMap, type SchematicPoint } from '../components/SchematicMap';
 import type { Distributor, KMeansRunResult, OfficeLocation } from '../types';
 
@@ -20,6 +21,7 @@ export const ClusteringPage: React.FC<ClusteringPageProps> = ({ onNotify }) => {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<KMeansRunResult | null>(null);
+  const [mapViewMode, setMapViewMode] = useState<'leaflet' | 'schematic'>('leaflet');
 
   useEffect(() => {
     const init = async () => {
@@ -87,7 +89,7 @@ export const ClusteringPage: React.FC<ClusteringPageProps> = ({ onNotify }) => {
         initMethod,
       });
       setResult(res.data);
-      onNotify('success', `K-Means converged in ${res.data.iterations} iteration(s) and saved to Neon.`);
+      onNotify('success', `K-Means converged in ${res.data.iterations} iteration(s) and saved to database.`);
     } catch (err) {
       onNotify('error', err instanceof Error ? err.message : 'K-Means clustering failed');
     } finally {
@@ -253,13 +255,51 @@ export const ClusteringPage: React.FC<ClusteringPageProps> = ({ onNotify }) => {
         </div>
 
         <div className="space-y-6 lg:col-span-8">
-          <SchematicMap
-            points={mapPoints}
-            centroids={result?.centroids || []}
-            showClusterLinks
-            height={420}
-            title="Schematic Coordinate Map & Geographic Clusters"
-          />
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-700">Map Visualization Mode:</span>
+            <div className="inline-flex rounded-md border border-slate-200 bg-slate-100 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setMapViewMode('schematic')}
+                className={`rounded px-3 py-1 font-medium transition-colors ${
+                  mapViewMode === 'schematic'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Schematic Coordinate Plot
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapViewMode('leaflet')}
+                className={`inline-flex items-center gap-1.5 rounded px-3 py-1 font-medium transition-colors ${
+                  mapViewMode === 'leaflet'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <MapIcon className="h-3 w-3" />
+                Interactive Leaflet Map
+              </button>
+            </div>
+          </div>
+
+          {mapViewMode === 'leaflet' ? (
+            <LeafletRouteMap
+              points={mapPoints}
+              centroids={result?.centroids || []}
+              height={420}
+              title="Interactive Leaflet Geographic Clusters"
+            />
+          ) : (
+            <SchematicMap
+              points={mapPoints}
+              centroids={result?.centroids || []}
+              showClusterLinks
+              height={420}
+              title="Schematic Coordinate Map & Geographic Clusters"
+            />
+          )}
 
           {result && (
             <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-5">

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy.dialects.postgresql import UUID
 
 from app.extensions import db
+from app.models.types import PortableUUID
 
 
 def _iso(val: datetime | str | None) -> str | None:
@@ -19,7 +19,7 @@ class OfficeLocation(db.Model):
     __tablename__ = "office_locations"
 
     id = db.Column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+        PortableUUID, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     name = db.Column(db.String(160), nullable=False)
     address = db.Column(db.String(255), nullable=False)

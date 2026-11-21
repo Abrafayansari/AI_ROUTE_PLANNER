@@ -10,6 +10,7 @@ import {
   HelpCircle,
   Info,
   RefreshCw,
+  Save,
   Search,
   ShieldAlert,
   Sparkles,
@@ -31,7 +32,6 @@ import type {
   BayesianPrediction,
   CptRow,
   DatabaseHealth,
-  Distributor,
   RoutePlanSummary,
 } from '../types';
 
@@ -56,23 +56,39 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
 
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
+  const [history, setHistory] = useState<BayesianPrediction[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // What-If Simulator state
-  const [simDistance, setSimDistance] = useState<'Near' | 'Medium' | 'Far'>('Far');
-  const [simDuration, setSimDuration] = useState<'Short' | 'Medium' | 'Long'>('Long');
-  const [simTimeSlot, setSimTimeSlot] = useState<'Morning' | 'Afternoon'>('Afternoon');
-  const [simPriority, setSimPriority] = useState<'Low' | 'Medium' | 'High'>('High');
+  // What-If Simulator state (supports 'Unobserved' for Bayesian marginalization)
+  const [simDistance, setSimDistance] = useState<'Near' | 'Medium' | 'Far' | 'Unobserved'>('Far');
+  const [simDuration, setSimDuration] = useState<'Short' | 'Medium' | 'Long' | 'Unobserved'>('Long');
+  const [simTimeSlot, setSimTimeSlot] = useState<'Morning' | 'Afternoon' | 'Unobserved'>('Afternoon');
+  const [simPriority, setSimPriority] = useState<'Low' | 'Medium' | 'High' | 'Unobserved'>('High');
   const [simResult, setSimResult] = useState<BayesianPrediction | null>(null);
   const [simulating, setSimulating] = useState(false);
+  const [savingSim, setSavingSim] = useState(false);
 
-  // Load plans and model metadata on mount
+  const loadHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await api.getPredictionHistory({ limit: 20 });
+      setHistory(res.data.items);
+    } catch {
+      // ignore if DB not yet ready
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // Load plans, model metadata, and saved history on mount
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
-        const [plansRes, infoRes] = await Promise.all([
+        const [plansRes, infoRes, histRes] = await Promise.all([
           api.getRoutePlans(1, 50).catch(() => ({ data: { items: [] } })),
           api.getModelInfo().catch(() => ({ data: null })),
+          api.getPredictionHistory({ limit: 20 }).catch(() => ({ data: { items: [] } })),
         ]);
 
         if (plansRes.data?.items) {
@@ -83,6 +99,9 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
         }
         if (infoRes.data) {
           setModelInfo(infoRes.data);
+        }
+        if (histRes.data?.items) {
+          setHistory(histRes.data.items);
         }
       } catch (err) {
         onNotify('error', err instanceof Error ? err.message : 'Failed to load initial data');
@@ -105,6 +124,7 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
       } else {
         setSelectedPrediction(null);
       }
+      void loadHistory();
     } catch (err) {
       onNotify('error', err instanceof Error ? err.message : 'Evaluation failed');
     } finally {
@@ -118,22 +138,52 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
     }
   }, [selectedPlanId]);
 
+  const observedSimCount = [simDistance, simDuration, simTimeSlot, simPriority].filter(
+    (v) => v !== 'Unobserved'
+  ).length;
+
+  const buildSimulationPayload = (saveToDb = false) => {
+    const payload: Record<string, unknown> = {
+      distributorName: 'What-If Simulation Stop',
+      allowPartial: true,
+      saveToDb,
+    };
+    if (simDistance !== 'Unobserved') payload.distanceCategory = simDistance;
+    if (simDuration !== 'Unobserved') payload.visitDurationCategory = simDuration;
+    if (simTimeSlot !== 'Unobserved') payload.timeSlot = simTimeSlot;
+    if (simPriority !== 'Unobserved') payload.priorityCategory = simPriority;
+    return payload;
+  };
+
   // Run What-If simulation
   const runSimulation = async () => {
+    if (observedSimCount === 0) {
+      setSimResult(null);
+      return;
+    }
     setSimulating(true);
     try {
-      const res = await api.predictVisitDelay({
-        distributorName: 'What-If Simulation Stop',
-        distanceCategory: simDistance,
-        visitDurationCategory: simDuration,
-        timeSlot: simTimeSlot,
-        priorityCategory: simPriority,
-      });
+      const res = await api.predictVisitDelay(buildSimulationPayload(false));
       setSimResult(res.data);
     } catch (err) {
       onNotify('error', err instanceof Error ? err.message : 'Simulation failed');
     } finally {
       setSimulating(false);
+    }
+  };
+
+  const handleSaveSimulation = async () => {
+    if (observedSimCount === 0) return;
+    setSavingSim(true);
+    try {
+      const res = await api.predictVisitDelay(buildSimulationPayload(true));
+      setSimResult(res.data);
+      onNotify('success', 'What-If prediction saved to prediction history.');
+      await loadHistory();
+    } catch (err) {
+      onNotify('error', err instanceof Error ? err.message : 'Failed to save simulation');
+    } finally {
+      setSavingSim(false);
     }
   };
 
@@ -395,7 +445,9 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
                                 ? 'bg-red-100 text-red-800'
                                 : evidence.distanceCategory === 'Medium'
                                   ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-emerald-100 text-emerald-800'
+                                  : evidence.distanceCategory === 'Unobserved'
+                                    ? 'bg-slate-100 text-slate-500'
+                                    : 'bg-emerald-100 text-emerald-800'
                             }`}
                           >
                             {evidence.distanceCategory}
@@ -411,7 +463,9 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
                                 ? 'bg-red-100 text-red-800'
                                 : evidence.visitDurationCategory === 'Medium'
                                   ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-emerald-100 text-emerald-800'
+                                  : evidence.visitDurationCategory === 'Unobserved'
+                                    ? 'bg-slate-100 text-slate-500'
+                                    : 'bg-emerald-100 text-emerald-800'
                             }`}
                           >
                             {evidence.visitDurationCategory}
@@ -422,7 +476,9 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
                             className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
                               evidence.timeSlot === 'Afternoon'
                                 ? 'bg-amber-100 text-amber-800'
-                                : 'bg-blue-100 text-blue-800'
+                                : evidence.timeSlot === 'Unobserved'
+                                  ? 'bg-slate-100 text-slate-500'
+                                  : 'bg-blue-100 text-blue-800'
                             }`}
                           >
                             {evidence.timeSlot}
@@ -799,16 +855,27 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
 
       {/* Interactive What-If Bayesian Scenario Simulator */}
       <div className="rounded-lg border border-slate-200 bg-white p-5">
-        <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <Brain className="h-4 w-4 text-blue-600" />
             <h3 className="text-sm font-semibold text-slate-900">
-              Interactive What-If Scenario Simulator
+              Interactive What-If Scenario Simulator (Full &amp; Partial Evidence)
             </h3>
           </div>
-          <span className="text-xs text-slate-500">
-            Dynamically adjust parent evidence and compute posterior probabilities
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-500">
+              Set any variable to Unobserved to marginalize using priors
+            </span>
+            <button
+              type="button"
+              onClick={handleSaveSimulation}
+              disabled={savingSim || observedSimCount === 0}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Save className="h-3.5 w-3.5" />
+              {savingSim ? 'Saving...' : 'Save to History'}
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 grid gap-6 md:grid-cols-12">
@@ -818,12 +885,13 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
               <label className="block text-xs font-medium text-slate-700">Transit Distance</label>
               <select
                 value={simDistance}
-                onChange={(e) => setSimDistance(e.target.value as any)}
+                onChange={(e) => setSimDistance(e.target.value as 'Near' | 'Medium' | 'Far' | 'Unobserved')}
                 className="mt-1 w-full rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900"
               >
                 <option value="Near">Near (&lt; 5 km)</option>
                 <option value="Medium">Medium (5–15 km)</option>
                 <option value="Far">Far (&gt; 15 km)</option>
+                <option value="Unobserved">Unobserved (Marginalize)</option>
               </select>
             </div>
 
@@ -831,12 +899,13 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
               <label className="block text-xs font-medium text-slate-700">Expected Duration</label>
               <select
                 value={simDuration}
-                onChange={(e) => setSimDuration(e.target.value as any)}
+                onChange={(e) => setSimDuration(e.target.value as 'Short' | 'Medium' | 'Long' | 'Unobserved')}
                 className="mt-1 w-full rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900"
               >
                 <option value="Short">Short (&lt; 30 min)</option>
                 <option value="Medium">Medium (30–59 min)</option>
                 <option value="Long">Long (&gt;= 60 min)</option>
+                <option value="Unobserved">Unobserved (Marginalize)</option>
               </select>
             </div>
 
@@ -844,11 +913,12 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
               <label className="block text-xs font-medium text-slate-700">Scheduled Time</label>
               <select
                 value={simTimeSlot}
-                onChange={(e) => setSimTimeSlot(e.target.value as any)}
+                onChange={(e) => setSimTimeSlot(e.target.value as 'Morning' | 'Afternoon' | 'Unobserved')}
                 className="mt-1 w-full rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900"
               >
                 <option value="Morning">Morning (&lt; 12:30)</option>
                 <option value="Afternoon">Afternoon (&gt;= 12:30)</option>
+                <option value="Unobserved">Unobserved (Marginalize)</option>
               </select>
             </div>
 
@@ -856,67 +926,163 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
               <label className="block text-xs font-medium text-slate-700">Distributor Priority</label>
               <select
                 value={simPriority}
-                onChange={(e) => setSimPriority(e.target.value as any)}
+                onChange={(e) => setSimPriority(e.target.value as 'Low' | 'Medium' | 'High' | 'Unobserved')}
                 className="mt-1 w-full rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900"
               >
                 <option value="Low">Low (Priority 1–2)</option>
                 <option value="Medium">Medium (Priority 3)</option>
                 <option value="High">High (Priority 4–5)</option>
+                <option value="Unobserved">Unobserved (Marginalize)</option>
               </select>
             </div>
           </div>
 
           {/* Result Card */}
           <div className="rounded-lg border border-slate-100 bg-slate-50 p-4 md:col-span-6 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-500 font-medium">Computed Posterior</span>
-                {simResult && (
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                      simResult.predictedRisk === 'High'
-                        ? 'bg-red-100 text-red-800'
-                        : simResult.predictedRisk === 'Medium'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-emerald-100 text-emerald-800'
-                    }`}
-                  >
-                    Predicted: {simResult.predictedRisk} Risk
-                  </span>
-                )}
+            {observedSimCount === 0 ? (
+              <div className="flex h-full items-center justify-center text-center text-xs text-slate-600">
+                Select at least one observed evidence variable (Distance, Duration, Time Slot, or Priority) to compute a posterior probability distribution.
               </div>
+            ) : (
+              <>
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-500 font-medium">
+                      {simulating
+                        ? 'Computing Posterior...'
+                        : simResult?.isPartialEvidence
+                          ? `Marginalized over: ${simResult.marginalizedVariables?.join(', ')}`
+                          : 'Computed Posterior (Full Evidence)'}
+                    </span>
+                    {simResult && (
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                          simResult.predictedRisk === 'High'
+                            ? 'bg-red-100 text-red-800'
+                            : simResult.predictedRisk === 'Medium'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                        }`}
+                      >
+                        Predicted: {simResult.predictedRisk} Risk
+                      </span>
+                    )}
+                  </div>
 
-              {simResult && (
-                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded bg-white p-2 border border-slate-200">
-                    <p className="text-[10px] text-slate-500 font-medium">P(Low)</p>
-                    <p className="mt-1 font-mono text-base font-bold text-emerald-700">
-                      {roundVal(simResult.probabilities.Low * 100, 1)}%
-                    </p>
-                  </div>
-                  <div className="rounded bg-white p-2 border border-slate-200">
-                    <p className="text-[10px] text-slate-500 font-medium">P(Medium)</p>
-                    <p className="mt-1 font-mono text-base font-bold text-amber-700">
-                      {roundVal(simResult.probabilities.Medium * 100, 1)}%
-                    </p>
-                  </div>
-                  <div className="rounded bg-white p-2 border border-slate-200">
-                    <p className="text-[10px] text-slate-500 font-medium">P(High)</p>
-                    <p className="mt-1 font-mono text-base font-bold text-red-700">
-                      {roundVal(simResult.probabilities.High * 100, 1)}%
-                    </p>
-                  </div>
+                  {simResult && (
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded bg-white p-2 border border-slate-200">
+                        <p className="text-[10px] text-slate-500 font-medium">P(Low)</p>
+                        <p className="mt-1 font-mono text-base font-bold text-emerald-700">
+                          {roundVal(simResult.probabilities.Low * 100, 1)}%
+                        </p>
+                      </div>
+                      <div className="rounded bg-white p-2 border border-slate-200">
+                        <p className="text-[10px] text-slate-500 font-medium">P(Medium)</p>
+                        <p className="mt-1 font-mono text-base font-bold text-amber-700">
+                          {roundVal(simResult.probabilities.Medium * 100, 1)}%
+                        </p>
+                      </div>
+                      <div className="rounded bg-white p-2 border border-slate-200">
+                        <p className="text-[10px] text-slate-500 font-medium">P(High)</p>
+                        <p className="mt-1 font-mono text-base font-bold text-red-700">
+                          {roundVal(simResult.probabilities.High * 100, 1)}%
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            {simResult?.recommendation && (
-              <p className="mt-3 text-xs text-slate-600 border-t border-slate-200 pt-2">
-                <strong>Advisory:</strong> {simResult.recommendation}
-              </p>
+                {simResult?.recommendation && (
+                  <p className="mt-3 text-xs text-slate-600 border-t border-slate-200 pt-2">
+                    <strong>Advisory:</strong> {simResult.recommendation}
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>
+      </div>
+
+      {/* Saved Prediction History */}
+      <div className="rounded-lg border border-slate-200 bg-white">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Saved Delay Prediction History</h3>
+            <p className="text-xs text-slate-500">
+              Recent Bayesian evaluations persisted in `visit_delay_predictions`
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadHistory()}
+            disabled={loadingHistory}
+            className="inline-flex items-center gap-1.5 rounded border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${loadingHistory ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+        {history.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500">
+            No saved predictions in history yet. Evaluate a route plan or click &ldquo;Save to History&rdquo; above.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-4 py-2.5">Target / Stop</th>
+                  <th className="px-3 py-2.5">Evidence (Dist / Dur / Time / Prio)</th>
+                  <th className="px-3 py-2.5 text-right">P(Low)</th>
+                  <th className="px-3 py-2.5 text-right">P(Med)</th>
+                  <th className="px-3 py-2.5 text-right">P(High)</th>
+                  <th className="px-4 py-2.5">Risk</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {history.map((item, idx) => (
+                  <tr key={item.id ?? idx} className="hover:bg-slate-50/70">
+                    <td className="px-4 py-2 font-medium text-slate-900">
+                      {item.distributorName}
+                      {item.routePlanName && (
+                        <span className="ml-1.5 text-[11px] font-normal text-slate-500">
+                          · {item.routePlanName}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-[11px] text-slate-600">
+                      {item.distanceCategory ?? '—'} / {item.visitDurationCategory ?? '—'} /{' '}
+                      {item.timeSlot ?? '—'} / {item.priorityCategory ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-emerald-700">
+                      {roundVal(item.probabilities.Low * 100, 1)}%
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-amber-700">
+                      {roundVal(item.probabilities.Medium * 100, 1)}%
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-semibold text-red-700">
+                      {roundVal(item.probabilities.High * 100, 1)}%
+                    </td>
+                    <td className="px-4 py-2">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                          item.predictedRisk === 'High'
+                            ? 'bg-red-100 text-red-800'
+                            : item.predictedRisk === 'Medium'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                        }`}
+                      >
+                        {item.predictedRisk}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* CPT Inspection Modal */}

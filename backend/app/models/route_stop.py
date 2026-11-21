@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 import re
 import uuid
-from sqlalchemy.dialects.postgresql import UUID
 
 from app.extensions import db
+from app.models.types import PortableUUID
 
 _HHMM_RE = re.compile(r"^(\d{2}:\d{2})$")
 
@@ -39,15 +39,15 @@ class RouteStop(db.Model):
     __tablename__ = "route_stops"
 
     id = db.Column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+        PortableUUID, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     route_plan_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("route_plans.id", ondelete="CASCADE"),
         nullable=False,
     )
     distributor_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("distributors.id", ondelete="SET NULL"),
         nullable=True,
     )

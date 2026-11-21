@@ -162,7 +162,7 @@ async function bootFlaskSupervisor(): Promise<void> {
   try {
     await ensurePythonEnvironment();
     startFlaskBackend();
-    await waitForFlaskReady(20000);
+    await waitForFlaskReady(25000);
   } catch (err) {
     backendState = 'error';
     backendStatusMessage =
@@ -170,13 +170,21 @@ async function bootFlaskSupervisor(): Promise<void> {
         ? `Python backend initialization failed: ${err.message}`
         : 'Python backend initialization failed.';
     console.error(backendStatusMessage);
+    throw err;
   }
 }
 
 function proxyToFlask(req: Request, res: Response): void {
+  const clientIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
+  const existingForwarded = req.headers['x-forwarded-for'];
+  const forwardedHeader = existingForwarded
+    ? `${Array.isArray(existingForwarded) ? existingForwarded.join(', ') : existingForwarded}, ${clientIp}`
+    : clientIp;
+
   const headers: http.OutgoingHttpHeaders = {
     ...req.headers,
     host: `${FLASK_HOST}:${FLASK_PORT}`,
+    'x-forwarded-for': forwardedHeader,
   };
 
   const proxyReq = http.request(
@@ -218,7 +226,10 @@ async function startServer(): Promise<void> {
     await ensureFrontendDependencies();
   }
 
-  const backendBootPromise = bootFlaskSupervisor();
+  let fatalBootError: unknown = null;
+  const backendBootPromise = bootFlaskSupervisor().catch((err) => {
+    fatalBootError = err;
+  });
 
   const shutdown = () => {
     shuttingDown = true;
@@ -234,12 +245,16 @@ async function startServer(): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Wait briefly so warm boots have Flask ready before port 3000 opens,
-  // without blocking port 3000 during cold-start Python package installs.
+  // Wait up to 25s so warm and typical boots have Flask ready before port 3000 opens,
+  // avoiding initial 503 race errors on /api/health while bounded on cold-start installs.
   await Promise.race([
     backendBootPromise,
-    new Promise<void>((resolve) => setTimeout(resolve, 4500)),
+    new Promise<void>((resolve) => setTimeout(resolve, 25000)),
   ]);
+
+  if (fatalBootError) {
+    throw fatalBootError;
+  }
 
   const app = express();
   const port = Number(process.env.PORT) || 3000;

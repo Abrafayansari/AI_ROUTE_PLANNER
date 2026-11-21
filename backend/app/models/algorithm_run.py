@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 from app.extensions import db
+from app.models.types import PortableJSON, PortableUUID, PortableUUIDList
 
 
 def _iso(val: datetime | str | None) -> str | None:
@@ -19,24 +19,24 @@ class AlgorithmRun(db.Model):
     __tablename__ = "algorithm_runs"
 
     id = db.Column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+        PortableUUID, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     route_plan_id = db.Column(
-        UUID(as_uuid=False),
+        PortableUUID,
         db.ForeignKey("route_plans.id", ondelete="CASCADE"),
         nullable=False,
     )
     algorithm_name = db.Column(db.String(50), nullable=False)
     status = db.Column(db.String(20), nullable=False, default="completed")
-    route_order = db.Column(ARRAY(UUID(as_uuid=False)), nullable=False, default=list)
-    route_names = db.Column(JSONB, nullable=False, default=list)
+    route_order = db.Column(PortableUUIDList, nullable=False, default=list)
+    route_names = db.Column(PortableJSON, nullable=False, default=list)
     total_cost = db.Column(db.Float, nullable=True)
     total_distance_km = db.Column(db.Float, nullable=True)
     estimated_duration_minutes = db.Column(db.Integer, nullable=True)
     nodes_expanded = db.Column(db.Integer, nullable=True)
     execution_time_ms = db.Column(db.Float, nullable=True)
-    parameters = db.Column(JSONB, nullable=False, default=dict)
-    result_details = db.Column(JSONB, nullable=False, default=dict)
+    parameters = db.Column(PortableJSON, nullable=False, default=dict)
+    result_details = db.Column(PortableJSON, nullable=False, default=dict)
     error_message = db.Column(db.Text, nullable=True)
     created_at = db.Column(
         db.DateTime(timezone=True),

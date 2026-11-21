@@ -406,9 +406,12 @@ class BayesianDelayNetwork:
         priority_category: str | None = None,
         stop_order: int | None = None,
         route_plan_id: str | None = None,
+        allow_partial: bool = False,
     ) -> dict[str, Any]:
         """
         Categorize inputs and run Bayesian inference for a single distributor visit.
+        When allow_partial=True, missing parent evidence is marginalized over
+        DEFAULT_PRIORS via infer_posterior().
         """
         # Resolve categories either from pre-computed category strings or raw values
         cat_dist = distance_category or (
@@ -423,7 +426,7 @@ class BayesianDelayNetwork:
         )
         cat_ts = time_slot or (
             categorize_time_slot(time_slot_raw, self.thresholds.get("time_slot", {}).get("afternoon_cutoff", "12:30"))
-            if time_slot_raw is not None
+            if time_slot_raw is not None and time_slot_raw != ""
             else None
         )
         cat_prio = priority_category or (
@@ -442,18 +445,25 @@ class BayesianDelayNetwork:
         if not cat_prio:
             missing_fields.append("priority / priority_category")
 
-        if missing_fields:
+        if not allow_partial and missing_fields:
             raise ValueError(
                 f"Missing required Bayesian Network evidence for '{distributor_name}': {', '.join(missing_fields)}"
             )
 
-        evidence = {
+        observed_count = sum(1 for c in (cat_dist, cat_dur, cat_ts, cat_prio) if c is not None)
+        if allow_partial and observed_count == 0:
+            raise ValueError(
+                f"At least one Bayesian Network evidence variable is required for '{distributor_name}'."
+            )
+
+        evidence: dict[str, str | None] = {
             "Distance": cat_dist,
             "VisitDuration": cat_dur,
             "TimeSlot": cat_ts,
             "Priority": cat_prio,
         }
 
+        marginalized = [k for k, v in evidence.items() if v is None]
         posteriors = self.infer_posterior(evidence)
 
         # Select highest posterior probability category (deterministic tie-breaker: High > Medium > Low)
@@ -464,7 +474,7 @@ class BayesianDelayNetwork:
         )
         predicted_risk = sorted_risks[0]
 
-        # Recommendation for high risk
+        # Recommendation for high/moderate risk
         recommended_buffer_minutes = 0
         recommendation_note = None
         if predicted_risk == "High" or posteriors["High"] >= 0.45:
@@ -492,16 +502,18 @@ class BayesianDelayNetwork:
                 "priorityRaw": priority_raw,
             },
             "evidence": {
-                "distanceCategory": cat_dist,
-                "visitDurationCategory": cat_dur,
-                "timeSlot": cat_ts,
-                "priorityCategory": cat_prio,
+                "distanceCategory": cat_dist or "Unobserved",
+                "visitDurationCategory": cat_dur or "Unobserved",
+                "timeSlot": cat_ts or "Unobserved",
+                "priorityCategory": cat_prio or "Unobserved",
             },
+            "isPartialEvidence": len(marginalized) > 0,
+            "marginalizedVariables": marginalized,
             "probabilities": posteriors,
             "predictedRisk": predicted_risk,
             "recommendedBufferMinutes": recommended_buffer_minutes,
             "recommendation": recommendation_note,
-            "explanation": self._generate_explanation(evidence, posteriors, predicted_risk),
+            "explanation": self._generate_explanation(evidence, posteriors, predicted_risk, marginalized),
             "modelVersion": self.version,
             "modelStatus": self.status,
             "validationStatus": VALIDATION_STATUS,
@@ -509,37 +521,51 @@ class BayesianDelayNetwork:
 
     def _generate_explanation(
         self,
-        evidence: dict[str, str],
+        evidence: dict[str, str | None],
         probs: dict[str, float],
         predicted_risk: str,
+        marginalized: list[str] | None = None,
     ) -> str:
         factors = []
-        if evidence["Distance"] == "Far":
+        dist_state = evidence.get("Distance")
+        if dist_state == "Far":
             factors.append("extended transit distance (>15 km)")
-        elif evidence["Distance"] == "Medium":
+        elif dist_state == "Medium":
             factors.append("moderate transit distance (5–15 km)")
-        else:
+        elif dist_state == "Near":
             factors.append("short transit distance (<5 km)")
 
-        if evidence["VisitDuration"] == "Long":
+        dur_state = evidence.get("VisitDuration")
+        if dur_state == "Long":
             factors.append("long planned visit (>=60 min)")
-        elif evidence["VisitDuration"] == "Medium":
+        elif dur_state == "Medium":
             factors.append("standard visit duration (30–59 min)")
-        else:
+        elif dur_state == "Short":
             factors.append("brief visit (<30 min)")
 
-        if evidence["TimeSlot"] == "Afternoon":
+        ts_state = evidence.get("TimeSlot")
+        if ts_state == "Afternoon":
             factors.append("afternoon arrival with accumulated route delay potential")
-        else:
+        elif ts_state == "Morning":
             factors.append("morning arrival with clear daily schedule buffer")
 
-        if evidence["Priority"] == "High":
+        prio_state = evidence.get("Priority")
+        if prio_state == "High":
             factors.append("high-priority account with thorough inspection protocols")
+        elif prio_state == "Medium":
+            factors.append("medium-priority account")
+        elif prio_state == "Low":
+            factors.append("low-priority account")
 
-        factor_str = ", ".join(factors)
+        factor_str = ", ".join(factors) if factors else "prior distributions"
+        marg_suffix = (
+            f" (marginalizing unobserved variables {', '.join(marginalized)} via prior distributions)"
+            if marginalized
+            else ""
+        )
         return (
             f"Bayesian inference determined {predicted_risk} delay risk (P={round(probs[predicted_risk]*100, 1)}%) "
-            f"based on {factor_str}."
+            f"based on {factor_str}{marg_suffix}."
         )
 
 
@@ -579,6 +605,7 @@ def predict_visit_delay(evidence: dict[str, Any]) -> dict[str, Any]:
         priority_category=evidence.get("priorityCategory") if evidence.get("priorityCategory") in PRIORITY_STATES else None,
         stop_order=evidence.get("stopOrder"),
         route_plan_id=evidence.get("routePlanId"),
+        allow_partial=bool(evidence.get("allowPartial", False)),
     )
 
 

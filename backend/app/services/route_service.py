@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 import pandas as pd
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.algorithms import run_astar, run_bfs, run_genetic_algorithm, run_ucs
 from app.algorithms.bayesian_network import get_bayesian_network
@@ -23,11 +23,11 @@ from app.utils.metrics import (
     time_to_minutes,
 )
 
-FIXED_OPTIMIZER_SEED = 42
-FIXED_DISTANCE_MULTIPLIER = 1.0
-FIXED_GA_POPULATION_SIZE = 80
-FIXED_GA_GENERATIONS = 150
-FIXED_GA_MUTATION_RATE = 0.18
+DEFAULT_OPTIMIZER_SEED = 42
+DEFAULT_DISTANCE_MULTIPLIER = 1.0
+DEFAULT_GA_POPULATION_SIZE = 80
+DEFAULT_GA_GENERATIONS = 150
+DEFAULT_GA_MUTATION_RATE = 0.18
 
 PREFERENCE_ORDER = {
     "A*": 0,
@@ -37,6 +37,13 @@ PREFERENCE_ORDER = {
 }
 
 
+def _non_workspace_plan_filter():
+    return ~or_(
+        RoutePlan.name == "K-Means Clustering Workspace",
+        RoutePlan.name.like("CSP Schedule — %"),
+    )
+
+
 def _to_utc_dt(plan_date_str: str, hhmm: str) -> datetime:
     return datetime.fromisoformat(f"{plan_date_str}T{hhmm}:00+00:00").astimezone(timezone.utc)
 
@@ -44,8 +51,8 @@ def _to_utc_dt(plan_date_str: str, hhmm: str) -> datetime:
 def _build_nodes_and_matrix(
     office_id: str,
     distributor_ids: list[str],
-    seed: int = FIXED_OPTIMIZER_SEED,
-    distance_multiplier: float = FIXED_DISTANCE_MULTIPLIER,
+    seed: int = DEFAULT_OPTIMIZER_SEED,
+    distance_multiplier: float = DEFAULT_DISTANCE_MULTIPLIER,
     travel_mode: str = "simulated_vehicle",
 ):
     office = db.session.get(OfficeLocation, office_id)
@@ -103,11 +110,17 @@ def _select_recommended_run(runs: list[dict]) -> dict:
 
 
 def generate_local_matrix(payload: dict) -> dict:
+    seed = int(payload["seed"]) if payload.get("seed") is not None else DEFAULT_OPTIMIZER_SEED
+    distance_multiplier = (
+        float(payload["distanceMultiplier"])
+        if payload.get("distanceMultiplier") is not None
+        else DEFAULT_DISTANCE_MULTIPLIER
+    )
     _, _, _, matrix = _build_nodes_and_matrix(
         office_id=payload["officeId"],
         distributor_ids=payload["distributorIds"],
-        seed=FIXED_OPTIMIZER_SEED,
-        distance_multiplier=FIXED_DISTANCE_MULTIPLIER,
+        seed=seed,
+        distance_multiplier=distance_multiplier,
         travel_mode=payload.get("travelMode", "simulated_vehicle"),
     )
     return {
@@ -119,13 +132,66 @@ def generate_local_matrix(payload: dict) -> dict:
     }
 
 
+def _predict_preview_delays_for_run(
+    nodes: list[dict], matrix, route_order: list[int]
+) -> list[dict]:
+    bn = get_bayesian_network()
+    clock_min = time_to_minutes("09:00")
+    predictions: list[dict] = []
+    for stop_idx, node_idx in enumerate(route_order):
+        if nodes[node_idx]["isOffice"]:
+            continue
+        prev_idx = route_order[stop_idx - 1] if stop_idx > 0 else 0
+        leg_dist = matrix.distanceKm[prev_idx][node_idx]
+        leg_dur = matrix.durationMinutes[prev_idx][node_idx]
+        clock_min += round(leg_dur)
+        arr_time_str = minutes_to_time(clock_min)
+        node_data = nodes[node_idx]
+        clock_min += int(node_data.get("visitDurationMinutes", 30))
+
+        pred = bn.predict_visit(
+            distributor_id=node_data["id"],
+            distributor_name=node_data["name"],
+            distance_km=round(leg_dist, 2),
+            visit_duration_minutes=int(node_data.get("visitDurationMinutes", 30)),
+            time_slot_raw=arr_time_str,
+            priority_raw=node_data.get("priority"),
+            stop_order=stop_idx,
+        )
+        predictions.append(pred)
+    return predictions
+
+
 def preview_optimization(payload: dict) -> dict:
+    seed = int(payload["seed"]) if payload.get("seed") is not None else DEFAULT_OPTIMIZER_SEED
+    distance_multiplier = (
+        float(payload["distanceMultiplier"])
+        if payload.get("distanceMultiplier") is not None
+        else DEFAULT_DISTANCE_MULTIPLIER
+    )
+    ga_pop = (
+        int(payload["gaPopulationSize"])
+        if payload.get("gaPopulationSize") is not None
+        else DEFAULT_GA_POPULATION_SIZE
+    )
+    ga_gens = (
+        int(payload["gaGenerations"])
+        if payload.get("gaGenerations") is not None
+        else DEFAULT_GA_GENERATIONS
+    )
+    ga_mut = (
+        float(payload["gaMutationRate"])
+        if payload.get("gaMutationRate") is not None
+        else DEFAULT_GA_MUTATION_RATE
+    )
+    travel_mode = payload.get("travelMode", "simulated_vehicle")
+
     _, _, nodes, matrix = _build_nodes_and_matrix(
         office_id=payload["officeId"],
         distributor_ids=payload["distributorIds"],
-        seed=FIXED_OPTIMIZER_SEED,
-        distance_multiplier=FIXED_DISTANCE_MULTIPLIER,
-        travel_mode=payload.get("travelMode", "simulated_vehicle"),
+        seed=seed,
+        distance_multiplier=distance_multiplier,
+        travel_mode=travel_mode,
     )
 
     return_to_office = bool(payload.get("returnToOffice", True))
@@ -135,42 +201,27 @@ def preview_optimization(payload: dict) -> dict:
     ga = run_genetic_algorithm(
         matrix,
         return_to_office,
-        seed=FIXED_OPTIMIZER_SEED,
-        population_size=FIXED_GA_POPULATION_SIZE,
-        generations=FIXED_GA_GENERATIONS,
-        mutation_rate=FIXED_GA_MUTATION_RATE,
+        seed=seed,
+        population_size=ga_pop,
+        generations=ga_gens,
+        mutation_rate=ga_mut,
     )
 
     all_runs = [bfs, ucs, astar, ga]
     completed = [r for r in all_runs if r.get("completed") and r.get("routeOrder")]
     recommended = _select_recommended_run(completed) if completed else None
 
-    # Calculate preview delay predictions for the recommended tour
-    preview_delay_predictions = []
-    if recommended:
-        bn = get_bayesian_network()
-        clock_min = time_to_minutes("09:00")
-        for stop_idx, node_idx in enumerate(recommended["routeOrder"]):
-            if nodes[node_idx]["isOffice"]:
-                continue
-            prev_idx = recommended["routeOrder"][stop_idx - 1] if stop_idx > 0 else 0
-            leg_dist = matrix.distanceKm[prev_idx][node_idx]
-            leg_dur = matrix.durationMinutes[prev_idx][node_idx]
-            clock_min += round(leg_dur)
-            arr_time_str = minutes_to_time(clock_min)
-            node_data = nodes[node_idx]
-            clock_min += int(node_data.get("visitDurationMinutes", 30))
+    delay_predictions_by_algorithm: dict[str, list[dict]] = {}
+    for r in completed:
+        delay_predictions_by_algorithm[r["algorithm"]] = _predict_preview_delays_for_run(
+            nodes, matrix, r["routeOrder"]
+        )
 
-            pred = bn.predict_visit(
-                distributor_id=node_data["id"],
-                distributor_name=node_data["name"],
-                distance_km=round(leg_dist, 2),
-                visit_duration_minutes=int(node_data.get("visitDurationMinutes", 30)),
-                time_slot_raw=arr_time_str,
-                priority_raw=node_data.get("priority"),
-                stop_order=stop_idx,
-            )
-            preview_delay_predictions.append(pred)
+    preview_delay_predictions = (
+        delay_predictions_by_algorithm.get(recommended["algorithm"], [])
+        if recommended
+        else []
+    )
 
     return {
         "nodes": nodes,
@@ -184,18 +235,28 @@ def preview_optimization(payload: dict) -> dict:
             "distanceMultiplier": matrix.distanceMultiplier,
             "travelMode": matrix.travelMode,
         },
+        "appliedConfig": {
+            "seed": seed,
+            "distanceMultiplier": distance_multiplier,
+            "travelMode": travel_mode,
+            "returnToOffice": return_to_office,
+            "gaPopulationSize": ga_pop,
+            "gaGenerations": ga_gens,
+            "gaMutationRate": ga_mut,
+        },
         "recommendedAlgorithm": recommended["algorithm"] if recommended else None,
         "results": all_runs,
         "delayPredictions": preview_delay_predictions,
+        "delayPredictionsByAlgorithm": delay_predictions_by_algorithm,
     }
 
 
 def list_route_plans(page: int = 1, page_size: int = 20) -> dict:
-    total = db.session.query(RoutePlan).count()
+    base_q = db.session.query(RoutePlan).filter(_non_workspace_plan_filter())
+    total = base_q.count()
     offset = (page - 1) * page_size
     plans = (
-        db.session.query(RoutePlan)
-        .order_by(RoutePlan.created_at.desc())
+        base_q.order_by(RoutePlan.created_at.desc())
         .limit(page_size)
         .offset(offset)
         .all()
@@ -244,14 +305,25 @@ def create_route_plan(payload: dict) -> dict:
         raise LookupError("One or more selected distributors do not exist.")
     dist_map = {str(d.id): d for d in dists}
 
+    distance_multiplier = (
+        float(payload["distanceMultiplier"])
+        if payload.get("distanceMultiplier") is not None
+        else DEFAULT_DISTANCE_MULTIPLIER
+    )
+    graph_seed = (
+        int(payload["graphSeed"])
+        if payload.get("graphSeed") is not None
+        else DEFAULT_OPTIMIZER_SEED
+    )
+
     plan = RoutePlan(
         name=payload["name"],
         plan_date=date.fromisoformat(payload["planDate"]),
         office_id=str(office.id),
         travel_mode=payload.get("travelMode", "simulated_vehicle"),
         return_to_office=bool(payload.get("returnToOffice", True)),
-        distance_multiplier=FIXED_DISTANCE_MULTIPLIER,
-        graph_seed=FIXED_OPTIMIZER_SEED,
+        distance_multiplier=distance_multiplier,
+        graph_seed=graph_seed,
         status="draft",
         map_provider="simulated",
         notes=payload.get("notes", ""),
@@ -392,8 +464,35 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
     if not distributor_ids:
         raise ValueError("Route plan has no distributors to optimize.")
 
-    seed = FIXED_OPTIMIZER_SEED
-    distance_multiplier = FIXED_DISTANCE_MULTIPLIER
+    seed = (
+        int(payload["seed"])
+        if payload.get("seed") is not None
+        else (int(plan.graph_seed) if plan.graph_seed is not None else DEFAULT_OPTIMIZER_SEED)
+    )
+    distance_multiplier = (
+        float(payload["distanceMultiplier"])
+        if payload.get("distanceMultiplier") is not None
+        else (
+            float(plan.distance_multiplier)
+            if plan.distance_multiplier is not None
+            else DEFAULT_DISTANCE_MULTIPLIER
+        )
+    )
+    ga_pop = (
+        int(payload["gaPopulationSize"])
+        if payload.get("gaPopulationSize") is not None
+        else DEFAULT_GA_POPULATION_SIZE
+    )
+    ga_gens = (
+        int(payload["gaGenerations"])
+        if payload.get("gaGenerations") is not None
+        else DEFAULT_GA_GENERATIONS
+    )
+    ga_mut = (
+        float(payload["gaMutationRate"])
+        if payload.get("gaMutationRate") is not None
+        else DEFAULT_GA_MUTATION_RATE
+    )
     return_to_office = bool(
         payload["returnToOffice"]
         if payload.get("returnToOffice") is not None
@@ -416,9 +515,9 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
         matrix,
         return_to_office,
         seed=seed,
-        population_size=FIXED_GA_POPULATION_SIZE,
-        generations=FIXED_GA_GENERATIONS,
-        mutation_rate=FIXED_GA_MUTATION_RATE,
+        population_size=ga_pop,
+        generations=ga_gens,
+        mutation_rate=ga_mut,
     )
 
     all_runs = [bfs, ucs, astar, ga]
@@ -512,6 +611,15 @@ def optimize_route_plan(plan_id: str, payload: dict) -> dict:
         "selectedAlgorithm": chosen_run["algorithm"],
         "matrixCacheHit": matrix.cacheHit,
         "speedKmh": matrix.speedKmh,
+        "appliedConfig": {
+            "seed": seed,
+            "distanceMultiplier": distance_multiplier,
+            "travelMode": travel_mode,
+            "returnToOffice": return_to_office,
+            "gaPopulationSize": ga_pop,
+            "gaGenerations": ga_gens,
+            "gaMutationRate": ga_mut,
+        },
         "nodes": nodes,
         "results": all_runs,
         "delayRiskSummary": delay_results.get("summary"),
@@ -579,6 +687,7 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
         else str(plan.plan_date)[:10]
     )
 
+    switched_algorithm = False
     if payload.get("selectedAlgorithm"):
         algo_row = (
             db.session.query(AlgorithmRun)
@@ -597,8 +706,12 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
             office, unique_dists, graph_nodes, matrix = _build_nodes_and_matrix(
                 office_id=str(plan.office_id),
                 distributor_ids=dist_ids,
-                seed=int(plan.graph_seed or 42),
-                distance_multiplier=float(plan.distance_multiplier or 1.25),
+                seed=int(plan.graph_seed) if plan.graph_seed is not None else DEFAULT_OPTIMIZER_SEED,
+                distance_multiplier=(
+                    float(plan.distance_multiplier)
+                    if plan.distance_multiplier is not None
+                    else DEFAULT_DISTANCE_MULTIPLIER
+                ),
                 travel_mode=plan.travel_mode or "simulated_vehicle",
             )
             node_idx_by_id = {n["id"]: idx for idx, n in enumerate(graph_nodes)}
@@ -617,6 +730,7 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
             plan.total_distance_km = float(algo_row.total_distance_km or 0.0)
             plan.total_duration_minutes = int(algo_row.estimated_duration_minutes or 0)
             plan.selected_algorithm = payload["selectedAlgorithm"]
+            switched_algorithm = True
 
     if payload.get("name") is not None:
         plan.name = payload["name"]
@@ -628,7 +742,12 @@ def update_route_plan(plan_id: str, payload: dict) -> dict:
         plan.notes = payload["notes"]
 
     plan.updated_at = datetime.now(timezone.utc)
-    db.session.commit()
+    if switched_algorithm:
+        db.session.flush()
+        from app.services.prediction_service import predict_route_plan_delays
+        predict_route_plan_delays(plan_id, save_to_db=True)
+    else:
+        db.session.commit()
     return plan.to_dict()
 
 
@@ -690,32 +809,34 @@ def update_stop_status(stop_id: str, status: str) -> dict | None:
 
 
 def get_analytics_summary() -> dict:
+    total_offices = db.session.query(OfficeLocation).count()
     total_distributors = db.session.query(Distributor).count()
     active_distributors = db.session.query(Distributor).filter_by(is_active=True).count()
     demo_distributors = db.session.query(Distributor).filter_by(is_demo=True).count()
 
-    total_plans = db.session.query(RoutePlan).count()
+    plan_base = db.session.query(RoutePlan).filter(_non_workspace_plan_filter())
+    total_plans = plan_base.count()
     scheduled_or_completed = (
-        db.session.query(RoutePlan)
+        plan_base
         .filter(RoutePlan.status.in_(["scheduled", "completed", "optimized", "in_progress"]))
         .count()
     )
 
     avg_dist_val = (
         db.session.query(func.avg(RoutePlan.total_distance_km))
-        .filter(RoutePlan.total_distance_km > 0)
+        .filter(_non_workspace_plan_filter(), RoutePlan.total_distance_km > 0)
         .scalar()
     )
     avg_dur_val = (
         db.session.query(func.avg(RoutePlan.total_duration_minutes))
-        .filter(RoutePlan.total_duration_minutes > 0)
+        .filter(_non_workspace_plan_filter(), RoutePlan.total_duration_minutes > 0)
         .scalar()
     )
     avg_distance_km = round(float(avg_dist_val), 2) if avg_dist_val is not None else None
     avg_duration_minutes = round(float(avg_dur_val), 1) if avg_dur_val is not None else None
 
     latest_plan_obj = (
-        db.session.query(RoutePlan).order_by(RoutePlan.created_at.desc()).first()
+        plan_base.order_by(RoutePlan.created_at.desc()).first()
     )
     latest_plan = latest_plan_obj.to_dict() if latest_plan_obj else None
 
@@ -877,13 +998,26 @@ def get_analytics_summary() -> dict:
     else:
         insights.append("No CSP visit schedule has been saved yet.")
 
+    pred_rows = db.session.query(VisitDelayPrediction).all()
+    pred_low = sum(1 for p in pred_rows if p.predicted_risk == "Low")
+    pred_med = sum(1 for p in pred_rows if p.predicted_risk == "Medium")
+    pred_high = sum(1 for p in pred_rows if p.predicted_risk == "High")
+    delay_prediction_summary = {
+        "totalPredictions": len(pred_rows),
+        "lowRiskCount": pred_low,
+        "mediumRiskCount": pred_med,
+        "highRiskCount": pred_high,
+    }
+
     return {
         "counts": {
+            "totalOffices": total_offices,
             "totalDistributors": total_distributors,
             "activeDistributors": active_distributors,
             "demoDistributors": demo_distributors,
             "totalRoutePlans": total_plans,
             "scheduledOrCompletedPlans": scheduled_or_completed,
+            "totalScheduledVisits": scheduled_count,
             "avgDistanceKm": avg_distance_km,
             "avgDurationMinutes": avg_duration_minutes,
         },
@@ -897,5 +1031,6 @@ def get_analytics_summary() -> dict:
             "remainingActiveCount": unscheduled_estimate,
             "scheduleDate": schedule_date_str,
         },
+        "delayPredictionSummary": delay_prediction_summary,
         "plainLanguageSummary": insights,
     }

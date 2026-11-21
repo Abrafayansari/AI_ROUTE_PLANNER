@@ -90,10 +90,10 @@ const BAYESIAN_QA: QaItem[] = [
       <div className="space-y-2 text-sm text-slate-700">
         <p>The network consists of 5 discrete random variables organized in a 2-tier Directed Acyclic Graph (DAG):</p>
         <ul className="list-inside list-disc space-y-1 font-mono text-xs">
-          <li><strong>Distance (D)</strong>: &#123;Near (&le;5 km), Medium (5-15 km), Far (&gt;15 km)&#125;</li>
-          <li><strong>Visit Duration (V)</strong>: &#123;Short (&le;30 min), Medium (30-45 min), Long (&gt;45 min)&#125;</li>
-          <li><strong>Time Slot (T)</strong>: &#123;Morning (&lt;12:00), Afternoon (&ge;12:00)&#125;</li>
-          <li><strong>Distributor Priority (P)</strong>: &#123;Low (1-2), Medium (3), High (4-5)&#125;</li>
+          <li><strong>Distance (D)</strong>: &#123;Near (&lt; 5 km), Medium (5–15 km), Far (&gt; 15 km)&#125;</li>
+          <li><strong>Visit Duration (V)</strong>: &#123;Short (&lt; 30 min), Medium (30–59 min), Long (&ge; 60 min)&#125;</li>
+          <li><strong>Time Slot (T)</strong>: &#123;Morning (&lt; 12:30), Afternoon (&ge; 12:30)&#125;</li>
+          <li><strong>Distributor Priority (P)</strong>: &#123;Low (1–2), Medium (3), High (4–5)&#125;</li>
           <li><strong>Delay Risk (R)</strong> [Target]: &#123;Low, Medium, High&#125;</li>
         </ul>
         <p>
@@ -113,10 +113,10 @@ const BAYESIAN_QA: QaItem[] = [
             <strong className="text-slate-900">Transit Distance:</strong> Longer travel legs between stops directly increase exposure to road congestion, detours, and transit time variance.
           </li>
           <li>
-            <strong className="text-slate-900">Visit Duration:</strong> Extensive client meetings (e.g. &gt;45 min) exhibit high variance in finish times due to unpredictable order negotiations and manager sign-offs.
+            <strong className="text-slate-900">Visit Duration:</strong> Extensive client meetings (&ge; 60 min) exhibit high variance in finish times due to unpredictable order negotiations and manager sign-offs.
           </li>
           <li>
-            <strong className="text-slate-900">Scheduled Time Slot:</strong> Afternoon visits carry compounded cumulative schedule slippage from earlier morning delays, as well as afternoon traffic peaks.
+            <strong className="text-slate-900">Scheduled Time Slot:</strong> Afternoon visits (&ge; 12:30) carry compounded cumulative schedule slippage from earlier morning delays, as well as afternoon traffic peaks.
           </li>
           <li>
             <strong className="text-slate-900">Distributor Priority:</strong> Higher priority accounts (Tier 4-5 key distributors) require thorough catalog walkthroughs, stock audits, and dispute resolutions, making overruns significantly more probable.
@@ -195,9 +195,13 @@ const BAYESIAN_QA: QaItem[] = [
           <strong>Prior Probability P(X):</strong> The marginal probability distribution of a variable before any evidence is observed for a specific visit. For instance:
         </p>
         <p className="rounded bg-slate-100 p-2 font-mono text-xs">
-          P(Distance) = &#123;Near: 0.40, Medium: 0.35, Far: 0.25&#125;
+          P(Distance) = &#123;Near: 0.40, Medium: 0.40, Far: 0.20&#125;
           <br />
-          P(TimeSlot) = &#123;Morning: 0.55, Afternoon: 0.45&#125;
+          P(VisitDuration) = &#123;Short: 0.35, Medium: 0.45, Long: 0.20&#125;
+          <br />
+          P(TimeSlot) = &#123;Morning: 0.50, Afternoon: 0.50&#125;
+          <br />
+          P(Priority) = &#123;Low: 0.25, Medium: 0.45, High: 0.30&#125;
         </p>
         <p>
           <strong>Posterior Probability P(R | e):</strong> The updated probability distribution of Delay Risk after conditioning on observed evidence for a specific scheduled stop (e.g. Far distance, Long duration, Afternoon slot, High priority &rArr; P(High)=92.03%).
@@ -247,7 +251,7 @@ const BAYESIAN_QA: QaItem[] = [
           Consider an extreme scenario evaluated by our engine:
           <br />
           <span className="font-mono text-xs text-slate-900 font-semibold">
-            Evidence: Distance = Far (&gt;15 km), Duration = Long (&gt;45 min), Time Slot = Afternoon (&ge;12:00), Priority = High (&ge;4)
+            Evidence: Distance = Far (&gt; 15 km), Duration = Long (&ge; 60 min), Time Slot = Afternoon (&ge; 12:30), Priority = High (4–5)
           </span>
         </p>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs space-y-2">
@@ -306,7 +310,7 @@ export const AiConceptsPage: React.FC = () => {
           Course Topics & Probabilistic Inference Architecture
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Smart Route Planner implements classical artificial intelligence techniques across seven modular syllabus domains. Every algorithm runs natively on the Python backend using NumPy, Pandas, and scikit-learn. No third-party routing or geocoding APIs are used; all graph metrics and delay probabilities are computed locally.
+          Smart Route Planner implements classical artificial intelligence techniques across seven modular syllabus domains. Every algorithm runs natively on the Python backend using NumPy and Pandas. No third-party routing or geocoding APIs are used; all graph metrics and delay probabilities are computed locally.
         </p>
         <div className="mt-3 inline-flex items-center gap-2 rounded-md bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-800">
           Syllabus Modules Implemented: Weeks 2, 3, 4, 5, 7, 12, and 14 (Bayesian Networks).
@@ -351,7 +355,7 @@ export const AiConceptsPage: React.FC = () => {
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-blue-600">Parent Variable</div>
                 <div className="text-xs font-bold text-slate-900">Distance (D)</div>
                 <div className="mt-1 text-[10px] text-slate-500 font-mono">Near | Med | Far</div>
-                <div className="mt-1 text-[9px] text-blue-700 font-mono">Priors: 0.40 / 0.35 / 0.25</div>
+                <div className="mt-1 text-[9px] text-blue-700 font-mono">Priors: 0.40 / 0.40 / 0.20</div>
               </div>
 
               <div className="rounded-lg border border-cyan-200 bg-cyan-50/70 p-3 text-center shadow-xs">
@@ -365,14 +369,14 @@ export const AiConceptsPage: React.FC = () => {
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">Parent Variable</div>
                 <div className="text-xs font-bold text-slate-900">Time Slot (T)</div>
                 <div className="mt-1 text-[10px] text-slate-500 font-mono">Morning | Afternoon</div>
-                <div className="mt-1 text-[9px] text-amber-700 font-mono">Priors: 0.55 / 0.45</div>
+                <div className="mt-1 text-[9px] text-amber-700 font-mono">Priors: 0.50 / 0.50</div>
               </div>
 
               <div className="rounded-lg border border-purple-200 bg-purple-50/70 p-3 text-center shadow-xs">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-purple-600">Parent Variable</div>
                 <div className="text-xs font-bold text-slate-900">Priority (P)</div>
                 <div className="mt-1 text-[10px] text-slate-500 font-mono">Low | Med | High</div>
-                <div className="mt-1 text-[9px] text-purple-700 font-mono">Priors: 0.30 / 0.45 / 0.25</div>
+                <div className="mt-1 text-[9px] text-purple-700 font-mono">Priors: 0.25 / 0.45 / 0.30</div>
               </div>
             </div>
 

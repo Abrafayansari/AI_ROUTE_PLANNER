@@ -139,6 +139,7 @@ class ScheduleRunInput(BaseModel):
     lunchStartTime: str = "12:30"
     lunchDurationMinutes: int = Field(default=60, ge=15, le=120)
     maxVisitsPerDay: int = Field(default=10, ge=1, le=30)
+    officeId: Optional[str] = None
     routePlanId: Optional[str] = None
 
     @field_validator("distributorIds")
@@ -160,13 +161,13 @@ class ScheduleRunInput(BaseModel):
             raise ValueError("Time values must be HH:MM (24h)")
         return v
 
-    @field_validator("routePlanId")
+    @field_validator("officeId", "routePlanId")
     @classmethod
-    def check_plan_id(cls, v: Optional[str]) -> Optional[str]:
+    def check_optional_uuid(cls, v: Optional[str]) -> Optional[str]:
         if v is None or v == "":
             return None
         if not is_valid_uuid(v):
-            raise ValueError("Invalid routePlanId UUID")
+            raise ValueError("Invalid UUID")
         return str(UUID(v))
 
     @model_validator(mode="after")
@@ -317,6 +318,7 @@ class VisitDelayInput(BaseModel):
     priorityCategory: Optional[Literal["Low", "Medium", "High"]] = None
     routePlanId: Optional[str] = None
     stopOrder: Optional[int] = Field(default=None, ge=1)
+    allowPartial: bool = False
     saveToDb: bool = False
 
     @field_validator("distributorId", "routePlanId")
