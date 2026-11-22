@@ -50,13 +50,17 @@ def clear_google_maps_caches() -> None:
 
 
 def get_google_server_api_key() -> str | None:
+    from app.config import is_placeholder_api_key
+
     key = None
     if has_app_context():
         key = current_app.config.get("GOOGLE_MAPS_API_KEY")
     if not key:
         key = os.getenv("GOOGLE_MAPS_API_KEY")
     key_str = str(key or "").strip()
-    return key_str if key_str else None
+    if not key_str or is_placeholder_api_key(key_str):
+        return None
+    return key_str
 
 
 def resolve_google_travel_mode(mode: str | None) -> str:

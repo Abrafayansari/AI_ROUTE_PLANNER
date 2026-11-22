@@ -35,7 +35,7 @@ def is_placeholder_database_url(raw_url: str | None) -> bool:
     cleaned = raw_url.strip()
     if cleaned.lower().startswith("sqlite:"):
         return False
-    if any(marker in cleaned for marker in ("<", ">", "USER:PASSWORD", "YOUR_")):
+    if any(marker in cleaned for marker in ("<", ">", "USER:PASSWORD", "YOUR_", "placeholder")):
         return True
     try:
         parsed = urlparse(cleaned)
@@ -43,6 +43,16 @@ def is_placeholder_database_url(raw_url: str | None) -> bool:
     except Exception:
         return True
     return host in {"", "host", "your-host", "your_host", "db_host", "placeholder", "example.com"}
+
+
+def is_placeholder_api_key(raw_key: str | None) -> bool:
+    """Detect unset or placeholder external API keys."""
+    if not raw_key or not str(raw_key).strip():
+        return True
+    cleaned = str(raw_key).strip()
+    if any(marker in cleaned for marker in ("<", ">", "YOUR_", "YOUR-KEY", "placeholder", "AIzaSyDummy", "sample_key")):
+        return True
+    return False
 
 
 def get_local_sqlite_database_url() -> str:
@@ -63,6 +73,18 @@ def normalize_sqlalchemy_database_url(raw_url: str | None) -> str | None:
         return None
 
     if cleaned.lower().startswith("sqlite:"):
+        # Handle SQLite relative/absolute paths robustly on Windows and cross-platform
+        # e.g., sqlite:///backend/instance/smart_route_planner.db
+        prefix = "sqlite:///"
+        if cleaned.lower().startswith(prefix):
+            raw_path = cleaned[len(prefix):]
+            # If it's a relative path, resolve relative to project root or backend dir
+            if not os.path.isabs(raw_path) and not (len(raw_path) > 1 and raw_path[1] == ":"):
+                # Resolve relative to root
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                abs_path = os.path.abspath(os.path.join(project_root, raw_path))
+                os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+                return f"sqlite:///{abs_path.replace(os.sep, '/')}"
         return cleaned
 
     if cleaned.startswith("postgres://"):

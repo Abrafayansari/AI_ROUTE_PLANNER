@@ -5,15 +5,11 @@ import type { DatabaseHealth } from './types';
 import { MainLayout } from './layouts/MainLayout';
 import { DashboardPage } from './pages/DashboardPage';
 import { DistributorsPage } from './pages/DistributorsPage';
-import { OfficePage } from './pages/OfficePage';
-import { ClusteringPage } from './pages/ClusteringPage';
 import { SchedulingPage } from './pages/SchedulingPage';
 import { OptimizerPage } from './pages/OptimizerPage';
-import { SavedPlansPage } from './pages/SavedPlansPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
-import { AiConceptsPage } from './pages/AiConceptsPage';
-import { DelayPredictionPage } from './pages/DelayPredictionPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { SavedPlansPage } from './pages/SavedPlansPage';
 
 export default function App() {
   const [dbHealth, setDbHealth] = useState<DatabaseHealth | null>(null);
@@ -101,18 +97,21 @@ export default function App() {
           }
         />
         <Route path="/distributors" element={<DistributorsPage onNotify={notify} />} />
-        <Route path="/office" element={<OfficePage onNotify={notify} />} />
-        <Route path="/clustering" element={<ClusteringPage onNotify={notify} />} />
         <Route path="/scheduling" element={<SchedulingPage onNotify={notify} />} />
         <Route path="/optimizer" element={<OptimizerPage onNotify={notify} />} />
-        <Route path="/saved-plans" element={<SavedPlansPage onNotify={notify} />} />
+        <Route path="/saved-plans" element={<Navigate to="/optimizer?tab=saved" replace />} />
         <Route path="/saved-plans/:planId" element={<SavedPlansPage onNotify={notify} />} />
         <Route
           path="/delay-prediction"
-          element={<DelayPredictionPage onNotify={notify} dbHealth={dbHealth} />}
+          element={<Navigate to="/analytics?tab=prediction" replace />}
         />
-        <Route path="/analytics" element={<AnalyticsPage />} />
-        <Route path="/ai-concepts" element={<AiConceptsPage />} />
+        <Route path="/clustering" element={<Navigate to="/distributors?tab=clusters" replace />} />
+        <Route path="/office" element={<Navigate to="/settings?tab=office" replace />} />
+        <Route
+          path="/analytics"
+          element={<AnalyticsPage onNotify={notify} dbHealth={dbHealth} />}
+        />
+        <Route path="/ai-concepts" element={<Navigate to="/analytics" replace />} />
         <Route
           path="/settings"
           element={

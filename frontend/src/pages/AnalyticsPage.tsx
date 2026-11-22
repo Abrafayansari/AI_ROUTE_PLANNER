@@ -8,15 +8,30 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { BarChart3, ShieldAlert } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
-import type { AnalyticsSummary } from '../types';
+import type { AnalyticsSummary, DatabaseHealth } from '../types';
+import { DelayPredictionPage } from './DelayPredictionPage';
 
-export const AnalyticsPage: React.FC = () => {
+interface AnalyticsPageProps {
+  onNotify?: (kind: 'success' | 'error', text: string) => void;
+  dbHealth?: DatabaseHealth | null;
+}
+
+export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
+  onNotify = () => {},
+  dbHealth = null,
+}) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') === 'prediction' ? 'prediction' : 'overview';
+
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (currentTab !== 'overview') return;
     const load = async () => {
       setLoading(true);
       try {
@@ -29,25 +44,51 @@ export const AnalyticsPage: React.FC = () => {
       }
     };
     void load();
-  }, []);
-
-  if (loading) {
-    return <div className="h-80 animate-pulse rounded-lg border border-slate-200 bg-white" />;
-  }
-
-  if (error || !summary) {
-    return (
-      <div className="rounded-lg border border-red-200 bg-white p-6 text-sm text-red-700">
-        {error || 'No analytics available.'}
-      </div>
-    );
-  }
+  }, [currentTab]);
 
   return (
     <div className="space-y-6">
+      {/* Tab Navigation */}
+      <div className="flex border-b border-slate-200 bg-white px-6 pt-3">
+        <button
+          type="button"
+          onClick={() => setSearchParams({ tab: 'overview' })}
+          className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+            currentTab === 'overview'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <BarChart3 className="h-4 w-4" />
+          Analytics & Performance Summary
+        </button>
+        <button
+          type="button"
+          onClick={() => setSearchParams({ tab: 'prediction' })}
+          className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+            currentTab === 'prediction'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <ShieldAlert className="h-4 w-4" />
+          Visit Delay Prediction (Bayesian Network)
+        </button>
+      </div>
+
+      {currentTab === 'prediction' ? (
+        <DelayPredictionPage onNotify={onNotify} dbHealth={dbHealth} />
+      ) : loading ? (
+        <div className="h-80 animate-pulse rounded-lg border border-slate-200 bg-white" />
+      ) : error || !summary ? (
+        <div className="rounded-lg border border-red-200 bg-white p-6 text-sm text-red-700">
+          {error || 'No analytics available.'}
+        </div>
+      ) : (
+        <div className="space-y-6">
       <div className="rounded-lg border border-slate-200 bg-white p-6">
         <h3 className="text-base font-semibold text-slate-900">
-          AI Lab Automated Analysis (Grounded Strictly in Stored Metrics)
+          Automated Performance Analysis
         </h3>
         <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-slate-700">
           {summary.plainLanguageSummary.map((line, i) => (
@@ -245,6 +286,8 @@ export const AnalyticsPage: React.FC = () => {
           <div className="p-6 text-sm text-slate-500">No stored algorithm data yet.</div>
         )}
       </div>
+        </div>
+      )}
     </div>
   );
 };

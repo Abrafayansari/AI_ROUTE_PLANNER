@@ -271,3 +271,26 @@ def test_partial_evidence_marginalization_matches_prior_weighting():
             allow_partial=True,
         )
 
+
+def test_predict_single_visit_respects_allow_partial_flag(tmp_path):
+    """Regression test ensuring predict_single_visit does not hardcode allow_partial=True."""
+    from app.services.prediction_service import predict_single_visit
+
+    # Missing evidence with allowPartial=False must fail
+    with pytest.raises(ValueError, match="Missing required Bayesian Network evidence"):
+        predict_single_visit({
+            "distributorName": "Incomplete Stop",
+            "distanceCategory": "Near",
+            "allowPartial": False,
+        })
+
+    # Missing evidence with allowPartial=True succeeds via marginalization
+    res = predict_single_visit({
+        "distributorName": "Incomplete Stop",
+        "distanceCategory": "Near",
+        "allowPartial": True,
+    })
+    assert res["isPartialEvidence"] is True
+    assert abs(sum(res["probabilities"].values()) - 1.0) < 1e-4
+
+

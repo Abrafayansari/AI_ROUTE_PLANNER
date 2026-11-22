@@ -434,3 +434,32 @@ def test_api_schedules_run_enforces_office_travel_and_priority(tmp_path, monkeyp
         assert first["travelMinutesFromPrevious"] == 45
         assert len(data["unscheduled"]) == 1
         assert data["unscheduled"][0]["distributorId"] == d_low
+
+
+def test_csp_off_grid_opening_time_inclusion():
+    """Verify distributors with opening times between slot increment grids (e.g. 09:10) can be scheduled."""
+    dists = [
+        {
+            "id": "off_grid_dist",
+            "name": "Off Grid Mart",
+            "priority": 5,
+            "visitDurationMinutes": 30,
+            "openingTime": "09:10",
+            "closingTime": "10:30",
+        }
+    ]
+    cfg = {
+        "workStartTime": "09:00",
+        "workEndTime": "17:00",
+        "slotIncrementMinutes": 15,  # Grid would be 09:00, 09:15, 09:30...
+        "travelBufferMinutes": 0,
+        "lunchBreakEnabled": False,
+        "maxVisitsPerDay": 5,
+        "officeToDistributorMinutes": {"off_grid_dist": 0},
+    }
+    res = run_csp_scheduler(dists, cfg)
+    assert len(res["scheduled"]) == 1
+    assert res["scheduled"][0]["distributorId"] == "off_grid_dist"
+    # Should be scheduled at 09:10 (exact opening) or 09:15
+    assert res["scheduled"][0]["startMinutes"] >= time_to_minutes("09:10")
+

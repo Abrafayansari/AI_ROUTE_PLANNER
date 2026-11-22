@@ -26,7 +26,8 @@ def get_offices():
         )
         offices = [r.to_dict() for r in rows]
         return ok({"offices": offices, "defaultOffice": offices[0] if offices else None})
-    except Exception:
+    except Exception as exc:
+        print("[GET /api/office ERROR]:", str(exc), flush=True)
         return fail(500, "DB_ERROR", "Failed to fetch office locations.")
 
 

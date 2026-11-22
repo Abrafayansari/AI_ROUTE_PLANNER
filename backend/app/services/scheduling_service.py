@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from typing import Any
 
 from app.algorithms.bayesian_network import get_bayesian_network
 from app.algorithms.csp import run_csp_scheduler
+from app.algorithms.smart_fix import (
+    diagnose_schedule,
+    generate_schedule_suggestions,
+    repair_schedule_quick_fix,
+    repair_schedule_smart_optimize,
+)
 from app.extensions import db
 from app.models import Distributor, OfficeLocation, RoutePlan, ScheduleEntry
 from app.models.route_stop import format_clock_from_iso
@@ -351,6 +359,18 @@ def run_and_save_schedule(cfg: dict) -> dict:
 
     db.session.query(ScheduleEntry).filter_by(route_plan_id=target_plan_id).delete()
     for entry in csp_result["scheduled"]:
+        notes_payload = {
+            "summary": csp_result['constraintsSummary'],
+            "bufferMinutes": entry['bufferMinutes'],
+            "delayRisk": entry.get('delayRisk', 'Low'),
+            "backupSnapshot": {
+                "distributorId": entry["distributorId"],
+                "startTime": entry["startTime"],
+                "endTime": entry["endTime"],
+                "visitDurationMinutes": entry["durationMinutes"],
+                "priority": entry["priority"],
+            },
+        }
         db.session.add(
             ScheduleEntry(
                 route_plan_id=target_plan_id,
@@ -364,10 +384,7 @@ def run_and_save_schedule(cfg: dict) -> dict:
                 distance_from_previous_km=entry.get("distanceKm"),
                 data_source=data_source,
                 is_feasible=True,
-                constraint_notes=(
-                    f"{csp_result['constraintsSummary']} (+{entry['bufferMinutes']}m travel) "
-                    f"[Bayes Risk: {entry.get('delayRisk', 'Low')}]"
-                ),
+                constraint_notes=json.dumps(notes_payload),
             )
         )
     db.session.commit()
@@ -388,4 +405,370 @@ def run_and_save_schedule(cfg: dict) -> dict:
         "fallbackReason": fallback_reason,
         "providerAttempts": provider_attempts,
         **csp_result,
+    }
+
+
+def smart_fix_schedule(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Intelligent Schedule Repair Service:
+    Executes diagnostics, runs requested mode (QUICK_FIX, SMART_OPTIMIZE, or SUGGESTIONS_ONLY),
+    and formats an Old vs. Proposed comparison without modifying database records.
+    """
+    mode = cfg.get("mode", "QUICK_FIX").upper()
+    office = _resolve_office(cfg.get("officeId"))
+
+    dist_ids = cfg.get("distributorIds") or []
+    if dist_ids:
+        dists = db.session.query(Distributor).filter(Distributor.id.in_(dist_ids)).all()
+    else:
+        dists = db.session.query(Distributor).filter(Distributor.is_active == True).all()
+
+    dist_dicts = [d.to_dict() for d in dists]
+    dist_map = {str(d["id"]): d for d in dist_dicts}
+
+    # Fetch current schedule entries (if routePlanId provided or latest)
+    route_plan_id = cfg.get("routePlanId")
+    current_entries: list[dict[str, Any]] = []
+    if route_plan_id:
+        entries = (
+            db.session.query(ScheduleEntry)
+            .filter_by(route_plan_id=route_plan_id)
+            .order_by(ScheduleEntry.scheduled_start.asc())
+            .all()
+        )
+        current_entries = [e.to_dict() for e in entries]
+    if not current_entries:
+        latest = get_latest_schedule()
+        if latest and latest.get("entries"):
+            current_entries = latest["entries"]
+            if not route_plan_id:
+                route_plan_id = latest.get("routePlanId")
+
+    # If still no entries, use distributors in default order
+    if not current_entries:
+        current_entries = [
+            {
+                "distributor_id": str(d["id"]),
+                "distributor_name": d["name"],
+                "priority": d["priority"],
+                "visit_duration_minutes": d["visit_duration_minutes"],
+                "start_time": "09:00",
+                "end_time": "09:30",
+            }
+            for d in dist_dicts[:8]
+        ]
+
+    # Build road matrix if road times enabled
+    use_road_times = bool(cfg.get("useRoadTravelTimes", True))
+    travel_mode = cfg.get("travelMode", "DRIVE")
+    opt_obj = cfg.get("optimizationObjective", OBJECTIVE_FASTEST_TIME)
+
+    road_matrix: CostMatrixResult | None = None
+    provider_name = "simulated_fallback"
+    data_source = "simulated_fallback"
+
+    if use_road_times and dist_dicts:
+        nodes = [
+            {
+                "id": str(office.id),
+                "name": office.name,
+                "latitude": float(office.latitude),
+                "longitude": float(office.longitude),
+                "isOffice": True,
+            }
+        ] + [
+            {
+                "id": str(d["id"]),
+                "name": d["name"],
+                "latitude": float(d["latitude"]),
+                "longitude": float(d["longitude"]),
+                "isOffice": False,
+            }
+            for d in dist_dicts
+        ]
+        try:
+            road_matrix = build_cost_matrix_with_routing(
+                nodes,
+                seed=42,
+                travel_mode=travel_mode,
+                optimization_objective=opt_obj,
+            )
+            provider_name = road_matrix.provider
+            data_source = road_matrix.dataSource
+        except Exception:
+            road_matrix = None
+
+    # Step 1: Run Schedule Diagnostics
+    diagnostics = diagnose_schedule(
+        entries=current_entries,
+        office=office.to_dict(),
+        distributors=dist_dicts,
+        config=cfg,
+        road_matrix=road_matrix,
+    )
+
+    # Step 2: Run Repair Modes
+    quick_fix_res = repair_schedule_quick_fix(
+        current_entries=current_entries,
+        office=office.to_dict(),
+        distributors=dist_dicts,
+        config=cfg,
+        road_matrix=road_matrix,
+    )
+
+    smart_opt_res = repair_schedule_smart_optimize(
+        office=office.to_dict(),
+        distributors=dist_dicts,
+        config=cfg,
+        road_matrix=road_matrix,
+    )
+
+    suggestions_res = generate_schedule_suggestions(
+        diagnostics=diagnostics,
+        quick_fix=quick_fix_res,
+        smart_opt=smart_opt_res,
+    )
+
+    # Step 3: Select target proposal based on requested mode
+    if mode == "SMART_OPTIMIZE":
+        active_proposal = smart_opt_res
+    elif mode == "SUGGESTIONS_ONLY":
+        active_proposal = {
+            "mode": "SUGGESTIONS_ONLY",
+            "feasible": True,
+            "solverStatus": "ADVISORY_SUGGESTIONS",
+            "executionTimeMs": 0.0,
+            "scheduled": current_entries,
+            "unscheduled": [],
+        }
+    else:  # QUICK_FIX
+        active_proposal = quick_fix_res
+
+    # Step 4: Construct Old vs. Proposed Comparison
+    orig_by_id = {
+        str(e.get("distributor_id") or e.get("distributorId")): e
+        for e in current_entries
+    }
+    prop_by_id = {
+        str(s.get("distributorId") or s.get("distributor_id")): s
+        for s in active_proposal.get("scheduled", [])
+    }
+
+    comparison_items: list[dict[str, Any]] = []
+    all_dids = list(dict.fromkeys(list(orig_by_id.keys()) + list(prop_by_id.keys())))
+
+    for did in all_dids:
+        orig = orig_by_id.get(did)
+        prop = prop_by_id.get(did)
+        d_name = (
+            prop.get("distributorName")
+            if prop
+            else orig.get("distributor_name") or orig.get("distributorName") or "Unknown"
+        )
+        d_meta = dist_map.get(did)
+
+        if orig and prop:
+            orig_start = orig.get("start_time") or orig.get("startTime", "09:00")
+            prop_start = prop.get("startTime") or prop.get("start_time", "09:00")
+            status = "MOVED" if orig_start != prop_start else "UNCHANGED"
+        elif not orig and prop:
+            status = "ADDED"
+            orig_start = None
+            prop_start = prop.get("startTime") or prop.get("start_time", "09:00")
+        else:
+            status = "REMOVED"
+            orig_start = orig.get("start_time") or orig.get("startTime", "09:00")
+            prop_start = None
+
+        comparison_items.append({
+            "distributorId": did,
+            "distributorName": d_name,
+            "status": status,
+            "originalStartTime": orig_start,
+            "proposedStartTime": prop_start,
+            "originalEndTime": orig.get("end_time") or orig.get("endTime") if orig else None,
+            "proposedEndTime": prop.get("endTime") or prop.get("end_time") if prop else None,
+            "visitDurationMinutes": (
+                prop.get("durationMinutes")
+                if prop
+                else orig.get("visit_duration_minutes") or 30
+            ),
+            "priority": d_meta["priority"] if d_meta else 3,
+            "openingTime": d_meta["opening_time"] if d_meta else "08:00",
+            "closingTime": d_meta["closing_time"] if d_meta else "18:00",
+            "travelMinutes": prop.get("travelMinutesFromPrevious") if prop else None,
+            "bufferMinutes": prop.get("bufferMinutes") if prop else None,
+            "delayRisk": prop.get("delayRisk") if prop else orig.get("delayRisk"),
+        })
+
+    # Resolved vs Remaining issues
+    diagnostics_on_proposal = diagnose_schedule(
+        entries=active_proposal.get("scheduled", []),
+        office=office.to_dict(),
+        distributors=dist_dicts,
+        config=cfg,
+        road_matrix=road_matrix,
+    )
+
+    resolved_count = max(0, diagnostics["issueCount"] - diagnostics_on_proposal["issueCount"])
+
+    return {
+        "mode": mode,
+        "routePlanId": route_plan_id,
+        "officeId": str(office.id),
+        "officeName": office.name,
+        "provider": provider_name,
+        "dataSource": data_source,
+        "diagnostics": diagnostics,
+        "activeProposal": active_proposal,
+        "quickFix": quick_fix_res,
+        "smartOptimize": smart_opt_res,
+        "suggestions": suggestions_res,
+        "comparison": {
+            "items": comparison_items,
+            "movedCount": len([c for c in comparison_items if c["status"] == "MOVED"]),
+            "unchangedCount": len([c for c in comparison_items if c["status"] == "UNCHANGED"]),
+            "addedCount": len([c for c in comparison_items if c["status"] == "ADDED"]),
+            "removedCount": len([c for c in comparison_items if c["status"] == "REMOVED"]),
+            "resolvedIssuesCount": resolved_count,
+            "remainingIssuesCount": diagnostics_on_proposal["issueCount"],
+            "remainingIssues": diagnostics_on_proposal["issues"],
+        },
+    }
+
+
+def apply_smart_fix_proposal(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Applies the confirmed Smart Fix proposal to the database.
+    Archives previous schedule records into a backup snapshot for rollback support.
+    """
+    route_plan_id = cfg.get("routePlanId")
+    if not route_plan_id:
+        latest = get_latest_schedule()
+        if latest and latest.get("routePlanId"):
+            route_plan_id = latest["routePlanId"]
+        else:
+            raise ValueError("No active routePlanId found to apply Smart Fix.")
+
+    proposed_scheduled = cfg.get("scheduled") or []
+    if not proposed_scheduled:
+        raise ValueError("Cannot apply an empty proposed schedule.")
+
+    office = _resolve_office(cfg.get("officeId"))
+    schedule_date = cfg.get("scheduleDate") or "2026-11-21"
+
+    # Capture backup snapshot of existing schedule before overwriting
+    existing_entries = (
+        db.session.query(ScheduleEntry)
+        .filter_by(route_plan_id=route_plan_id)
+        .order_by(ScheduleEntry.scheduled_start.asc())
+        .all()
+    )
+    backup_snapshot = [
+        {
+            "distributor_id": str(e.distributor_id) if e.distributor_id else None,
+            "distributor_name": e.distributor_name,
+            "scheduled_start": e.scheduled_start.isoformat() if e.scheduled_start else None,
+            "scheduled_end": e.scheduled_end.isoformat() if e.scheduled_end else None,
+            "visit_duration_minutes": e.visit_duration_minutes,
+            "priority": e.priority,
+            "travel_from_previous_minutes": e.travel_from_previous_minutes,
+            "distance_from_previous_km": e.distance_from_previous_km,
+            "data_source": e.data_source,
+        }
+        for e in existing_entries
+    ]
+
+    # Delete existing entries and insert proposed entries
+    db.session.query(ScheduleEntry).filter_by(route_plan_id=route_plan_id).delete()
+
+    data_source = cfg.get("dataSource", "osrm_osm")
+    for entry in proposed_scheduled:
+        start_str = entry.get("startTime") or entry.get("start_time")
+        end_str = entry.get("endTime") or entry.get("end_time")
+        dur = int(entry.get("durationMinutes") or entry.get("visit_duration_minutes") or 30)
+
+        notes_payload = {
+            "appliedFromSmartFixMode": cfg.get("mode", "QUICK_FIX"),
+            "bufferMinutes": entry.get("bufferMinutes", 15),
+            "delayRisk": entry.get("delayRisk", "Low"),
+            "backupHistory": backup_snapshot,
+        }
+
+        db.session.add(
+            ScheduleEntry(
+                route_plan_id=route_plan_id,
+                distributor_id=entry.get("distributorId") or entry.get("distributor_id"),
+                distributor_name=entry.get("distributorName") or entry.get("distributor_name"),
+                scheduled_start=_to_utc_datetime(schedule_date, start_str),
+                scheduled_end=_to_utc_datetime(schedule_date, end_str),
+                visit_duration_minutes=dur,
+                priority=int(entry.get("priority", 3)),
+                travel_from_previous_minutes=entry.get("travelMinutesFromPrevious") or entry.get("travel_from_previous_minutes"),
+                distance_from_previous_km=entry.get("distanceKm") or entry.get("distance_from_previous_km"),
+                data_source=data_source,
+                is_feasible=True,
+                constraint_notes=json.dumps(notes_payload),
+            )
+        )
+
+    db.session.commit()
+
+    return {
+        "success": True,
+        "message": f"Successfully applied {len(proposed_scheduled)} repaired visits to schedule.",
+        "routePlanId": route_plan_id,
+        "appliedCount": len(proposed_scheduled),
+        "backupCount": len(backup_snapshot),
+    }
+
+
+def restore_schedule_backup(route_plan_id: str) -> dict[str, Any]:
+    """
+    Restores the previous schedule snapshot from backup history stored in constraint_notes.
+    """
+    first_entry = (
+        db.session.query(ScheduleEntry)
+        .filter_by(route_plan_id=route_plan_id)
+        .first()
+    )
+    if not first_entry or not first_entry.constraint_notes:
+        raise LookupError("No backup snapshot found for this route plan.")
+
+    try:
+        parsed_notes = json.loads(first_entry.constraint_notes)
+        backup_list = parsed_notes.get("backupHistory")
+        if not backup_list:
+            raise LookupError("No previous schedule backup available in record notes.")
+    except Exception as exc:
+        raise LookupError(f"Could not parse backup snapshot: {exc}")
+
+    # Remove current entries and restore from backup
+    db.session.query(ScheduleEntry).filter_by(route_plan_id=route_plan_id).delete()
+
+    for item in backup_list:
+        db.session.add(
+            ScheduleEntry(
+                route_plan_id=route_plan_id,
+                distributor_id=item["distributor_id"],
+                distributor_name=item["distributor_name"],
+                scheduled_start=datetime.fromisoformat(item["scheduled_start"]).astimezone(timezone.utc),
+                scheduled_end=datetime.fromisoformat(item["scheduled_end"]).astimezone(timezone.utc),
+                visit_duration_minutes=item["visit_duration_minutes"],
+                priority=item["priority"],
+                travel_from_previous_minutes=item.get("travel_from_previous_minutes"),
+                distance_from_previous_km=item.get("distance_from_previous_km"),
+                data_source=item.get("data_source", "osrm_osm"),
+                is_feasible=True,
+                constraint_notes="Restored from pre-Smart Fix backup snapshot.",
+            )
+        )
+
+    db.session.commit()
+
+    return {
+        "success": True,
+        "message": f"Restored {len(backup_list)} visits from pre-repair snapshot.",
+        "routePlanId": route_plan_id,
+        "restoredCount": len(backup_list),
     }

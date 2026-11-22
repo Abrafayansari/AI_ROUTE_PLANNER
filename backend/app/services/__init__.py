@@ -1,3 +1,4 @@
+
 from app.services.db_service import (
     apply_migrations_idempotently,
     check_database_health,
@@ -7,7 +8,13 @@ from app.services.db_service import (
     log_api_request,
 )
 from app.services.clustering_service import get_latest_clusters, run_and_save_clusters
-from app.services.scheduling_service import get_latest_schedule, run_and_save_schedule
+from app.services.scheduling_service import (
+    apply_smart_fix_proposal,
+    get_latest_schedule,
+    restore_schedule_backup,
+    run_and_save_schedule,
+    smart_fix_schedule,
+)
 from app.services.route_service import (
     create_route_plan,
     delete_route_plan,
@@ -46,6 +53,7 @@ from app.services.routing_service import (
 __all__ = [
     "AllRoutingProvidersFailedError",
     "apply_migrations_idempotently",
+    "apply_smart_fix_proposal",
     "build_cost_matrix_with_google_or_fallback",
     "build_cost_matrix_with_routing",
     "check_database_health",
@@ -75,8 +83,10 @@ __all__ = [
     "predict_route_plan_delays",
     "predict_single_visit",
     "preview_optimization",
+    "restore_schedule_backup",
     "run_and_save_clusters",
     "run_and_save_schedule",
+    "smart_fix_schedule",
     "update_route_plan",
     "update_stop_status",
 ]

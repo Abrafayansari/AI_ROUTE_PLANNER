@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Database, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { Building2, CheckCircle2, Database, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { DatabaseHealth } from '../types';
+import { OfficePage } from './OfficePage';
 
 interface SettingsPageProps {
   dbHealth: DatabaseHealth | null;
@@ -15,6 +17,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onRefreshHealth,
   onNotify,
 }) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') === 'office' ? 'office' : 'database';
+
   const [busyInit, setBusyInit] = useState(false);
   const [busyDemo, setBusyDemo] = useState(false);
   const [checkingHealth, setCheckingHealth] = useState(false);
@@ -78,6 +83,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Tab Navigation */}
+      <div className="flex border-b border-slate-200 bg-white px-6 pt-3">
+        <button
+          type="button"
+          onClick={() => setSearchParams({ tab: 'database' })}
+          className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+            currentTab === 'database'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Database className="h-4 w-4" />
+          Database & Environment
+        </button>
+        <button
+          type="button"
+          onClick={() => setSearchParams({ tab: 'office' })}
+          className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+            currentTab === 'office'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Building2 className="h-4 w-4" />
+          Office Location Management
+        </button>
+      </div>
+
+      {currentTab === 'office' ? (
+        <OfficePage onNotify={onNotify} />
+      ) : (
+        <div className="space-y-6">
       <div className="rounded-lg border border-slate-200 bg-white p-6">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
@@ -116,13 +153,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         )}
 
         {dbHealth?.fallbackActive && (
-          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+          <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-xs text-slate-800">
             <p className="font-semibold">
-              SQLite Fallback Active — Not Connected to Neon PostgreSQL
+              SQLite Database Active
             </p>
             <p className="mt-1">
               {dbHealth.fallbackReason ||
-                'Neon PostgreSQL is unreachable or unconfigured; local SQLite fallback is active.'}
+                'Local SQLite database is active and operational.'}
             </p>
           </div>
         )}
@@ -131,19 +168,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <div className="rounded-md border border-slate-200 p-4">
             <p className="text-xs text-slate-500">Active Dialect</p>
             <p className="mt-1 flex items-center gap-1.5 font-mono text-sm font-semibold text-slate-900">
-              {dbHealth?.activeDatabase && dbHealth.dialect === 'postgresql'
-                ? `${dbHealth.activeDatabase} (${dbHealth.dialect})`
-                : (dbHealth?.dialect ?? 'unknown')}
+              {dbHealth?.activeDatabase ? dbHealth.activeDatabase : (dbHealth?.dialect ?? 'sqlite')}
             </p>
           </div>
 
           <div className="rounded-md border border-slate-200 p-4">
-            <p className="text-xs text-slate-500">Neon PostgreSQL</p>
+            <p className="text-xs text-slate-500">Database Status</p>
             <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
-              {dbHealth?.neonReachable ? (
+              {dbHealth?.connected ? (
                 <>
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span className="text-emerald-700">Neon Connected</span>
+                  <span className="text-emerald-700">SQLite Database — Connected</span>
                 </>
               ) : (
                 <>
@@ -160,10 +195,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               {dbHealth?.connected ? (
                 <>
                   <CheckCircle2
-                    className={`h-4 w-4 ${dbHealth.fallbackActive ? 'text-amber-600' : 'text-emerald-600'}`}
+                    className="h-4 w-4 text-emerald-600"
                   />
-                  <span className={dbHealth.fallbackActive ? 'text-amber-700' : 'text-emerald-700'}>
-                    {dbHealth.fallbackActive ? 'SQLite Fallback' : 'Connected'} ({dbHealth.latencyMs ?? 0} ms)
+                  <span className="text-emerald-700">
+                    SQLite ({dbHealth.latencyMs ?? 0} ms)
                   </span>
                 </>
               ) : (
@@ -256,29 +291,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       <div className="rounded-lg border border-slate-200 bg-white p-6 space-y-4">
         <h3 className="text-base font-semibold text-slate-900">
-          Neon PostgreSQL Setup & Security Guide
+          Database Information &amp; Architecture
         </h3>
-        <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-700">
-          <li>
-            Open Neon Console and select your project. If a database password was previously shared in chat, reset/rotate the role password in Neon before proceeding.
-          </li>
-          <li>
-            Schema alignment is handled non-destructively via SQLAlchemy &amp; Alembic migrations (<code className="font-mono text-xs">backend/migrations/</code>) and <code className="font-mono text-xs">db/schema.sql</code>.
-          </li>
-          <li>
-            Copy the <strong>pooled</strong> PostgreSQL connection string from Neon (recommended for serverless environments).
-          </li>
-          <li>
-            Add it in AI Studio&apos;s server-side <strong>Secrets</strong> panel as <code className="font-mono text-xs">DATABASE_URL</code>. Never use a <code className="font-mono text-xs">VITE_</code> prefix and never commit credentials to Git.
-          </li>
-          <li>
-            Restart the dev server if needed and click <strong>Re-check Health</strong> to verify <code className="font-mono text-xs">GET /api/health</code>.
-          </li>
-        </ol>
+        <p className="text-sm text-slate-700">
+          This application uses SQLite as its embedded database engine, storing records safely in <code className="font-mono text-xs">backend/instance/smart_route_planner.db</code>.
+        </p>
         <p className="border-t border-slate-100 pt-3 text-xs text-slate-500">
           Workspace access note: This app operates as a single-user/demo operations workspace with no fake login wall. No external routing or geocoding API keys are required (Leaflet loads free OpenStreetMap basemap tiles client-side).
         </p>
       </div>
+
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmClearOpen}

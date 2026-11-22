@@ -40,8 +40,16 @@ def can_import_all(python_bin: str) -> bool:
     return result.returncode == 0
 
 
+def get_venv_python(venv_dir: Path) -> Path:
+    if os.name == "nt":
+        candidate = venv_dir / "Scripts" / "python.exe"
+        if candidate.exists() or not (venv_dir / "bin" / "python").exists():
+            return candidate
+    return venv_dir / "bin" / "python"
+
+
 def ensure_venv(venv_dir: Path) -> Path:
-    venv_python = venv_dir / "bin" / "python"
+    venv_python = get_venv_python(venv_dir)
     if venv_python.exists():
         return venv_python
 
@@ -96,7 +104,7 @@ def main() -> int:
     venv_dir = backend_dir / ".venv"
     requirements_file = backend_dir / "requirements.txt"
 
-    venv_python = venv_dir / "bin" / "python"
+    venv_python = get_venv_python(venv_dir)
     if venv_python.exists() and can_import_all(str(venv_python)):
         return 0
 

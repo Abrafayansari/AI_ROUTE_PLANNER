@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Edit3, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { Download, Edit3, Map as MapIcon, Plus, Search, Store, Trash2, Upload, X } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { api, distributorsExportUrl } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Distributor, PaginationMeta } from '../types';
+import { ClusteringPage } from './ClusteringPage';
+import { formatTime12Hour } from '../utils/time';
 
 interface DistributorsPageProps {
   onNotify: (kind: 'success' | 'error', text: string) => void;
@@ -41,6 +44,9 @@ const EMPTY_FORM: DistributorFormState = {
 };
 
 export const DistributorsPage: React.FC<DistributorsPageProps> = ({ onNotify }) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') === 'clusters' ? 'clusters' : 'directory';
+
   const [items, setItems] = useState<Distributor[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta>({
     page: 1,
@@ -233,6 +239,38 @@ export const DistributorsPage: React.FC<DistributorsPageProps> = ({ onNotify }) 
 
   return (
     <div className="space-y-6">
+      {/* Tab Navigation */}
+      <div className="flex border-b border-slate-200 bg-white px-6 pt-3">
+        <button
+          type="button"
+          onClick={() => setSearchParams({ tab: 'directory' })}
+          className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+            currentTab === 'directory'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Store className="h-4 w-4" />
+          Distributor Directory
+        </button>
+        <button
+          type="button"
+          onClick={() => setSearchParams({ tab: 'clusters' })}
+          className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+            currentTab === 'clusters'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <MapIcon className="h-4 w-4" />
+          Map & K-Means Clusters
+        </button>
+      </div>
+
+      {currentTab === 'clusters' ? (
+        <ClusteringPage onNotify={onNotify} />
+      ) : (
+        <div className="space-y-6">
       <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
@@ -388,7 +426,7 @@ export const DistributorsPage: React.FC<DistributorsPageProps> = ({ onNotify }) 
                         {d.visit_duration_minutes} min
                       </td>
                       <td className="px-4 py-3 font-mono text-xs tabular-nums text-slate-700">
-                        {d.opening_time}–{d.closing_time}
+                        {formatTime12Hour(d.opening_time)} – {formatTime12Hour(d.closing_time)}
                       </td>
                       <td className="px-4 py-3 text-xs font-medium">
                         <span className={d.is_active ? 'text-emerald-700' : 'text-slate-400'}>
@@ -641,6 +679,9 @@ export const DistributorsPage: React.FC<DistributorsPageProps> = ({ onNotify }) 
               </div>
             </form>
           </div>
+        </div>
+      )}
+
         </div>
       )}
 

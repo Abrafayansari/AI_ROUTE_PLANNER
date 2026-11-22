@@ -187,6 +187,36 @@ export const api = {
     useRoadTravelTimes?: boolean;
     routePlanId?: string | null;
   }) => request<CspRunResult>({ url: '/api/schedules/run', method: 'POST', data: body }),
+
+  previewSmartFix: (body: {
+    mode: 'QUICK_FIX' | 'SMART_OPTIMIZE' | 'SUGGESTIONS_ONLY';
+    routePlanId?: string | null;
+    officeId?: string | null;
+    distributorIds?: string[];
+    scheduleDate?: string;
+    workStartTime?: string;
+    workEndTime?: string;
+    slotIncrementMinutes?: number;
+    travelBufferMinutes?: number;
+    lunchBreakEnabled?: boolean;
+    lunchStartTime?: string;
+    lunchDurationMinutes?: number;
+    maxVisitsPerDay?: number;
+    travelMode?: TravelMode;
+    optimizationObjective?: OptimizationObjective;
+    useRoadTravelTimes?: boolean;
+  }) => request<import('../types').SmartFixResponse>({ url: '/api/schedules/smart-fix', method: 'POST', data: body }),
+
+  applySmartFix: (body: {
+    routePlanId?: string | null;
+    officeId?: string | null;
+    scheduleDate?: string;
+    mode: string;
+    scheduled: Array<Record<string, unknown>>;
+  }) => request<{ message: string; appliedCount: number; backupCount: number }>({ url: '/api/schedules/smart-fix/apply', method: 'POST', data: body }),
+
+  restoreSchedule: (body: { routePlanId?: string }) =>
+    request<{ message: string; restoredCount: number }>({ url: '/api/schedules/restore', method: 'POST', data: body }),
   getLatestSchedule: () =>
     request<{
       routePlanId: string;

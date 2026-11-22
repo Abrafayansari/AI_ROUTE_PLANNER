@@ -96,13 +96,17 @@ def get_osrm_profile() -> str:
 
 
 def get_ors_api_key() -> str | None:
+    from app.config import is_placeholder_api_key
+
     val = None
     if has_app_context():
         val = current_app.config.get("OPENROUTESERVICE_API_KEY")
     if not val:
         val = os.getenv("OPENROUTESERVICE_API_KEY")
     cleaned = str(val or "").strip()
-    return cleaned if cleaned else None
+    if not cleaned or is_placeholder_api_key(cleaned):
+        return None
+    return cleaned
 
 
 def get_ors_base_url() -> str:

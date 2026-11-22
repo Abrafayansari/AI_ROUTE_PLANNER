@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "node server.ts",
-    "build": "npm --prefix frontend run build",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:gateway": "tsx --env-file=.env server.ts",
+    "dev:backend": "node -e \"const {spawn}=require('child_process'),fs=require('fs');const py=fs.existsSync('backend/.venv/Scripts/python.exe')?'backend/.venv/Scripts/python.exe':'backend/.venv/bin/python';const p=spawn(py,['run.py'],{cwd:'backend',env:{...process.env,PYTHONUNBUFFERED:'1',PORT:'5000'},stdio:'inherit'});process.on('SIGINT',()=>p.kill());process.on('SIGTERM',()=>p.kill())\"",
+    "start": "tsx server.ts",
+    "build:server": "esbuild server.ts --platform=node --format=esm --target=node20 --outfile=dist/server.js",
+    "build": "npm --prefix frontend run build && npm run build:server",
     "preview": "npm --prefix frontend run preview",
     "clean": "rm -rf dist frontend/dist server.js",
     "lint": "npm --prefix frontend run lint",
-    "test": "backend/.venv/bin/pytest -v backend/tests"
+    "test": "node -e \"const {spawnSync}=require('child_process'),fs=require('fs');const py=fs.existsSync('backend/.venv/Scripts/python.exe')?'backend/.venv/Scripts/python.exe':'backend/.venv/bin/python';process.exit(spawnSync(py,['-m','pytest','-v','backend/tests'],{stdio:'inherit'}).status||0)\""
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

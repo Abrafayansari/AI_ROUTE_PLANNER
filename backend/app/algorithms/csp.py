@@ -128,15 +128,22 @@ def run_csp_scheduler(distributors: list[dict], config: dict) -> dict:
 
         domain: list[int] = []
         blocked_by_lunch_only = False
+        # Include the exact earliest_start if it falls between work_start grid points
+        candidate_slots: set[int] = set()
+        if earliest_start <= latest_start:
+            candidate_slots.add(earliest_start)
         t = work_start
         while t <= latest_start:
             if t >= earliest_start:
-                t_end = t + dur
-                if lunch_enabled and _intervals_overlap(t, t_end, lunch_start, lunch_end):
-                    blocked_by_lunch_only = True
-                else:
-                    domain.append(t)
+                candidate_slots.add(t)
             t += increment
+
+        for slot_time in sorted(candidate_slots):
+            t_end = slot_time + dur
+            if lunch_enabled and _intervals_overlap(slot_time, t_end, lunch_start, lunch_end):
+                blocked_by_lunch_only = True
+            else:
+                domain.append(slot_time)
 
         if not domain:
             reason = (

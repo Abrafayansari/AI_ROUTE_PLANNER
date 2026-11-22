@@ -6,9 +6,16 @@ from pydantic import ValidationError
 from app.config import redact_secrets
 from app.extensions import db
 from app.routes.common import pydantic_error_response, rate_limit, require_database
-from app.services import AllRoutingProvidersFailedError, get_latest_schedule, run_and_save_schedule
+from app.services import (
+    AllRoutingProvidersFailedError,
+    apply_smart_fix_proposal,
+    get_latest_schedule,
+    restore_schedule_backup,
+    run_and_save_schedule,
+    smart_fix_schedule,
+)
 from app.utils.responses import fail, ok
-from app.utils.validation import ScheduleRunInput
+from app.utils.validation import ApplySmartFixInput, ScheduleRunInput, SmartFixInput
 
 scheduling_bp = Blueprint("scheduling", __name__)
 
@@ -56,3 +63,61 @@ def run_schedule():
     except Exception as exc:
         db.session.rollback()
         return fail(400, "CSP_ERROR", str(exc))
+
+
+@scheduling_bp.post("/schedules/smart-fix")
+@require_database
+@rate_limit(30, 60.0)
+def preview_smart_fix():
+    try:
+        parsed = SmartFixInput.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as exc:
+        return pydantic_error_response(exc)
+
+    try:
+        result = smart_fix_schedule(parsed.model_dump())
+        return ok(result, "Smart Fix diagnostic analysis and repair proposals computed.")
+    except Exception as exc:
+        db.session.rollback()
+        return fail(400, "SMART_FIX_ERROR", str(exc))
+
+
+@scheduling_bp.post("/schedules/smart-fix/apply")
+@require_database
+@rate_limit(30, 60.0)
+def apply_smart_fix():
+    try:
+        parsed = ApplySmartFixInput.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as exc:
+        return pydantic_error_response(exc)
+
+    try:
+        result = apply_smart_fix_proposal(parsed.model_dump())
+        return ok(result, "Smart Fix schedule repair applied successfully.")
+    except Exception as exc:
+        db.session.rollback()
+        return fail(400, "APPLY_ERROR", str(exc))
+
+
+@scheduling_bp.post("/schedules/restore")
+@require_database
+@rate_limit(30, 60.0)
+def restore_schedule():
+    body = request.get_json(silent=True) or {}
+    route_plan_id = body.get("routePlanId")
+    if not route_plan_id:
+        latest = get_latest_schedule()
+        if latest and latest.get("routePlanId"):
+            route_plan_id = latest["routePlanId"]
+        else:
+            return fail(400, "MISSING_PLAN_ID", "routePlanId is required to restore backup.")
+
+    try:
+        result = restore_schedule_backup(route_plan_id)
+        return ok(result, "Schedule successfully restored from pre-repair snapshot.")
+    except LookupError as exc:
+        db.session.rollback()
+        return fail(404, "NOT_FOUND", str(exc))
+    except Exception as exc:
+        db.session.rollback()
+        return fail(400, "RESTORE_ERROR", str(exc))

@@ -28,11 +28,15 @@ let shuttingDown = false;
 let restartTimer: NodeJS.Timeout | null = null;
 
 function resolvePythonExecutable(): string {
+  const winVenvPython = path.resolve(process.cwd(), 'backend/.venv/Scripts/python.exe');
+  if (fs.existsSync(winVenvPython)) {
+    return winVenvPython;
+  }
   const venvPython = path.resolve(process.cwd(), 'backend/.venv/bin/python');
   if (fs.existsSync(venvPython)) {
     return venvPython;
   }
-  return 'python3';
+  return process.platform === 'win32' ? 'python' : 'python3';
 }
 
 function runCommand(
@@ -79,7 +83,8 @@ async function ensurePythonEnvironment(): Promise<void> {
   backendState = 'bootstrapping';
   backendStatusMessage = 'Bootstrapping Python virtual environment and backend dependencies...';
   const bootstrapScript = path.resolve(process.cwd(), 'backend/bootstrap.py');
-  await runCommand('python3', [bootstrapScript], 'python-bootstrap');
+  const pythonCmd = resolvePythonExecutable();
+  await runCommand(pythonCmd, [bootstrapScript], 'python-bootstrap');
 }
 
 function startFlaskBackend(): ChildProcess {
@@ -266,12 +271,20 @@ async function startServer(): Promise<void> {
     await ensureFrontendDependencies();
   }
 
-  const backendBootPromise = bootFlaskSupervisor().catch((err) => {
-    console.error(
-      'Backend boot error:',
-      err instanceof Error ? err.message : 'Unknown error'
-    );
-  });
+  const skipBackendSupervisor = process.env.NO_FLASK_SUPERVISOR === 'true';
+
+  const backendBootPromise = skipBackendSupervisor
+    ? Promise.resolve().then(() => {
+        backendState = 'ready';
+        backendStatusMessage = 'External Flask backend expected on port ' + FLASK_PORT;
+        console.log(`[gateway] External Flask backend expected on http://${FLASK_HOST}:${FLASK_PORT}`);
+      })
+    : bootFlaskSupervisor().catch((err) => {
+        console.error(
+          'Backend boot error:',
+          err instanceof Error ? err.message : 'Unknown error'
+        );
+      });
 
   const shutdown = () => {
     shuttingDown = true;

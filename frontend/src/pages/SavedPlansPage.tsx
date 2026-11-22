@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { SchematicMap, type SchematicPoint } from '../components/SchematicMap';
 import { LeafletRouteMap } from '../components/LeafletRouteMap';
 import { GoogleKarachiMap } from '../components/GoogleKarachiMap';
+import { formatTime12Hour } from '../utils/time';
 import type {
   AlgorithmName,
   OptimizationObjective,
@@ -38,9 +39,7 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
   const [deleteTarget, setDeleteTarget] = useState<RoutePlanSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [switchingObjective, setSwitchingObjective] = useState(false);
-  const [mapViewMode, setMapViewMode] = useState<'google' | 'leaflet' | 'schematic'>(
-    hasGoogleBrowserKey ? 'google' : 'leaflet'
-  );
+  const [mapViewMode, setMapViewMode] = useState<'leaflet' | 'schematic'>('leaflet');
   const [evaluatingDelays, setEvaluatingDelays] = useState(false);
 
   const loadPlans = async (targetPage = page) => {
@@ -276,18 +275,6 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
           <div className="inline-flex rounded-md border border-slate-200 bg-slate-100 p-0.5 text-xs">
             <button
               type="button"
-              onClick={() => setMapViewMode('google')}
-              className={`inline-flex items-center gap-1.5 rounded px-3 py-1 font-medium transition-colors ${
-                mapViewMode === 'google'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Globe className="h-3 w-3" />
-              Karachi Google Maps
-            </button>
-            <button
-              type="button"
               onClick={() => setMapViewMode('leaflet')}
               className={`inline-flex items-center gap-1.5 rounded px-3 py-1 font-medium transition-colors ${
                 mapViewMode === 'leaflet'
@@ -322,17 +309,7 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
           </button>
         </div>
 
-        {mapViewMode === 'google' ? (
-          <GoogleKarachiMap
-            points={Array.from(pointMap.values())}
-            routeOrderIds={routeOrderIds}
-            encodedPolyline={plan.encoded_polyline}
-            dataSource={planDataSource}
-            height={380}
-            onSwitchToLeaflet={() => setMapViewMode('leaflet')}
-            title={`Saved Route (Google Maps) · ${plan.selected_algorithm || 'Draft'} (${plan.total_duration_minutes} min · ${plan.total_distance_km} km)`}
-          />
-        ) : mapViewMode === 'leaflet' ? (
+        {mapViewMode === 'leaflet' ? (
           <LeafletRouteMap
             points={Array.from(pointMap.values())}
             routeOrderIds={routeOrderIds}
@@ -424,7 +401,7 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
                       {s.travel_from_previous_minutes ?? 0} min
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
-                      {s.estimated_arrival_hhmm || '—'} → {s.estimated_departure_hhmm || '—'}
+                      {s.estimated_arrival_hhmm ? formatTime12Hour(s.estimated_arrival_hhmm) : '—'} → {s.estimated_departure_hhmm ? formatTime12Hour(s.estimated_departure_hhmm) : '—'}
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       {(() => {
@@ -586,7 +563,7 @@ export const SavedPlansPage: React.FC<SavedPlansPageProps> = ({ onNotify }) => {
           <div>
             <h3 className="text-base font-semibold text-slate-900">Saved Route Plans</h3>
             <p className="text-xs text-slate-500">
-              Persisted in Neon PostgreSQL across refreshes
+              Persisted in SQLite database across refreshes
             </p>
           </div>
           <button

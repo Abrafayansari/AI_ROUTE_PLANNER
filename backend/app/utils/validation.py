@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
@@ -185,6 +185,72 @@ class ScheduleRunInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_work_hours(self):
+        if parse_time_to_minutes(self.workEndTime) <= parse_time_to_minutes(self.workStartTime):
+            raise ValueError("Work end time must be after work start time")
+        return self
+
+
+class SmartFixInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    mode: Literal["QUICK_FIX", "SMART_OPTIMIZE", "SUGGESTIONS_ONLY"] = "QUICK_FIX"
+    routePlanId: Optional[str] = None
+    officeId: Optional[str] = None
+    distributorIds: Optional[list[str]] = None
+    scheduleDate: Optional[str] = "2026-11-21"
+    workStartTime: str = "09:00"
+    workEndTime: str = "17:00"
+    slotIncrementMinutes: int = Field(default=15, ge=5, le=60)
+    travelBufferMinutes: int = Field(default=15, ge=0, le=120)
+    lunchBreakEnabled: bool = True
+    lunchStartTime: str = "12:30"
+    lunchDurationMinutes: int = Field(default=60, ge=15, le=120)
+    maxVisitsPerDay: int = Field(default=10, ge=1, le=30)
+    travelMode: TravelModeLiteral = "DRIVE"
+    optimizationObjective: OptimizationObjectiveLiteral = "FASTEST_TIME"
+    useRoadTravelTimes: bool = True
+
+    @field_validator("routePlanId", "officeId")
+    @classmethod
+    def check_smart_fix_uuid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if not is_valid_uuid(v):
+            raise ValueError("Invalid UUID")
+        return str(UUID(v))
+
+    @field_validator("distributorIds")
+    @classmethod
+    def check_dist_ids(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return None
+        return _validate_uuid_list(v, allow_empty=True)
+
+    @field_validator("workStartTime", "workEndTime", "lunchStartTime")
+    @classmethod
+    def check_smart_fix_hhmm(cls, v: str) -> str:
+        if not TIME_24H_RE.match(v):
+            raise ValueError("Time values must be HH:MM (24h)")
+        return v
+
+
+class ApplySmartFixInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    routePlanId: Optional[str] = None
+    officeId: Optional[str] = None
+    scheduleDate: Optional[str] = "2026-11-21"
+    mode: str = "QUICK_FIX"
+    scheduled: list[dict[str, Any]] = Field(..., min_length=1)
+
+    @field_validator("routePlanId", "officeId")
+    @classmethod
+    def check_apply_uuid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if not is_valid_uuid(v):
+            raise ValueError("Invalid UUID")
+        return str(UUID(v))
         if parse_time_to_minutes(self.workEndTime) <= parse_time_to_minutes(self.workStartTime):
             raise ValueError("Work end time must be after work start time")
         return self

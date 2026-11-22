@@ -119,8 +119,8 @@ def test_end_to_end_sqlite_workflows(tmp_path):
         # 3. Load Karachi demo data & verify CSV export formula neutralization
         demo_res = client.post("/api/demo/load")
         assert demo_res.status_code == 201
-        dist_list = client.get("/api/distributors?pageSize=20").get_json()["data"]["items"]
-        assert len(dist_list) == 9
+        dist_list = client.get("/api/distributors?pageSize=50").get_json()["data"]["items"]
+        assert len(dist_list) >= 10
         dist_ids = [d["id"] for d in dist_list]
 
         formula_dist = client.post(

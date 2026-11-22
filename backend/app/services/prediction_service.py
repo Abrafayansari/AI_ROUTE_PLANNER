@@ -142,6 +142,8 @@ def predict_single_visit(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         priority = distributor.priority
 
+    allow_partial = bool(payload.get("allowPartial", False))
+
     prediction = bn.predict_visit(
         distributor_id=distributor_id,
         distributor_name=name,
@@ -155,7 +157,7 @@ def predict_single_visit(payload: dict[str, Any]) -> dict[str, Any]:
         priority_category=payload.get("priorityCategory"),
         stop_order=payload.get("stopOrder"),
         route_plan_id=payload.get("routePlanId"),
-        allow_partial=True,
+        allow_partial=allow_partial,
     )
 
     # Optionally persist if requested
@@ -222,12 +224,19 @@ def predict_route_plan_delays(route_plan_id: str, save_to_db: bool = True) -> di
         dist = s.distributor
         priority_val = dist.priority if dist else 3
 
-        # Resolve distance: prefer distance_from_previous_km, or straight-line
-        dist_km = float(s.distance_from_previous_km) if s.distance_from_previous_km is not None else 5.0
+        # Resolve distance: prefer distance_from_previous_km, or straight-line if coordinates present
+        dist_km = (
+            float(s.distance_from_previous_km)
+            if s.distance_from_previous_km is not None
+            else None
+        )
+        if dist_km is None and dist is not None and s.distributor_id is not None:
+            # We do not invent an arbitrary 5.0 km default; if missing, allow_partial handles it cleanly
+            dist_km = None
         dur_min = int(s.visit_duration_minutes or (dist.visit_duration_minutes if dist else 30))
 
         # Time slot from estimated arrival
-        time_val = s.estimated_arrival or "10:00"
+        time_val = s.estimated_arrival or None
 
         pred = bn.predict_visit(
             distributor_id=str(s.distributor_id),
@@ -238,6 +247,7 @@ def predict_route_plan_delays(route_plan_id: str, save_to_db: bool = True) -> di
             priority_raw=priority_val,
             stop_order=int(s.stop_order),
             route_plan_id=route_plan_id,
+            allow_partial=True,
         )
 
         risk = pred["predictedRisk"]

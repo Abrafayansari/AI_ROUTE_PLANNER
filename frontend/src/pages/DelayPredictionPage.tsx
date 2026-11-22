@@ -112,19 +112,24 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
     void init();
   }, []);
 
-  // Evaluate route plan delays whenever selectedPlanId changes
-  const evaluateRoutePlan = async (planId: string) => {
+  const [savingPlanPredictions, setSavingPlanPredictions] = useState(false);
+
+  // Evaluate route plan delays on read-only basis without writing to DB
+  const evaluateRoutePlan = async (planId: string, saveToDb = false) => {
     if (!planId) return;
     setEvaluating(true);
     try {
-      const res = await api.predictRouteDelay({ routePlanId: planId, saveToDb: true });
+      const res = await api.predictRouteDelay({ routePlanId: planId, saveToDb });
       setPredictions(res.data.predictions);
       if (res.data.predictions.length > 0) {
         setSelectedPrediction(res.data.predictions[0]);
       } else {
         setSelectedPrediction(null);
       }
-      void loadHistory();
+      if (saveToDb) {
+        onNotify('success', 'Route plan delay predictions saved to history.');
+        void loadHistory();
+      }
     } catch (err) {
       onNotify('error', err instanceof Error ? err.message : 'Evaluation failed');
     } finally {
@@ -132,9 +137,19 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
     }
   };
 
+  const handleSaveRoutePredictions = async () => {
+    if (!selectedPlanId || predictions.length === 0) return;
+    setSavingPlanPredictions(true);
+    try {
+      await evaluateRoutePlan(selectedPlanId, true);
+    } finally {
+      setSavingPlanPredictions(false);
+    }
+  };
+
   useEffect(() => {
     if (selectedPlanId) {
-      void evaluateRoutePlan(selectedPlanId);
+      void evaluateRoutePlan(selectedPlanId, false);
     }
   }, [selectedPlanId]);
 
@@ -301,12 +316,21 @@ export const DelayPredictionPage: React.FC<DelayPredictionPageProps> = ({
 
           <button
             type="button"
-            onClick={() => evaluateRoutePlan(selectedPlanId)}
+            onClick={() => evaluateRoutePlan(selectedPlanId, false)}
             disabled={evaluating || !selectedPlanId}
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${evaluating ? 'animate-spin' : ''}`} />
             Re-evaluate
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveRoutePredictions}
+            disabled={evaluating || savingPlanPredictions || !selectedPlanId || predictions.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+          >
+            <Save className="h-3.5 w-3.5" />
+            {savingPlanPredictions ? 'Saving...' : 'Save Predictions to History'}
           </button>
         </div>
 

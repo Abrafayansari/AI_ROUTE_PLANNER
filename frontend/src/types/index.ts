@@ -572,3 +572,121 @@ export interface RouteDelayResponse {
   validationStatus: string;
 }
 
+export type SmartFixMode = 'QUICK_FIX' | 'SMART_OPTIMIZE' | 'SUGGESTIONS_ONLY';
+
+export interface DiagnosticIssue {
+  type: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  distributorId?: string;
+  distributorName?: string;
+  message: string;
+  shortfallMinutes?: number;
+  requiredMinutes?: number;
+  availableMinutes?: number;
+  travelMinutes?: number;
+  bufferMinutes?: number;
+  probabilities?: { Low: number; Medium: number; High: number };
+  recommendedBufferMinutes?: number;
+}
+
+export interface DiagnosticsSummary {
+  valid: boolean;
+  issueCount: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  issues: DiagnosticIssue[];
+}
+
+export interface ComparisonItem {
+  distributorId: string;
+  distributorName: string;
+  status: 'MOVED' | 'UNCHANGED' | 'ADDED' | 'REMOVED';
+  originalStartTime: string | null;
+  proposedStartTime: string | null;
+  originalEndTime: string | null;
+  proposedEndTime: string | null;
+  visitDurationMinutes: number;
+  priority: number;
+  openingTime: string;
+  closingTime: string;
+  travelMinutes?: number | null;
+  bufferMinutes?: number | null;
+  delayRisk?: 'Low' | 'Medium' | 'High';
+}
+
+export interface ScheduleSuggestion {
+  category: string;
+  title: string;
+  detail: string;
+  impact: string;
+  modeRecommended: SmartFixMode;
+}
+
+export interface SmartFixResponse {
+  mode: SmartFixMode;
+  routePlanId?: string;
+  officeId?: string;
+  officeName?: string;
+  provider?: string;
+  dataSource?: string;
+  diagnostics: DiagnosticsSummary;
+  activeProposal: {
+    mode: SmartFixMode;
+    feasible: boolean;
+    solverStatus: string;
+    executionTimeMs: number;
+    scheduled: ScheduledVisitEntry[];
+    unscheduled: UnscheduledVisitReport[];
+    totalTravelMinutes?: number;
+    totalDistanceKm?: number;
+    totalWaitingMinutes?: number;
+    highRiskCount?: number;
+    objectiveScore?: number;
+    backtracks?: number;
+  };
+  quickFix: {
+    mode: 'QUICK_FIX';
+    feasible: boolean;
+    solverStatus: string;
+    executionTimeMs: number;
+    scheduled: ScheduledVisitEntry[];
+    unscheduled: UnscheduledVisitReport[];
+    totalTravelMinutes?: number;
+    totalDistanceKm?: number;
+  };
+  smartOptimize: {
+    mode: 'SMART_OPTIMIZE';
+    feasible: boolean;
+    solverStatus: string;
+    executionTimeMs: number;
+    scheduled: ScheduledVisitEntry[];
+    unscheduled: UnscheduledVisitReport[];
+    totalTravelMinutes?: number;
+    totalDistanceKm?: number;
+    totalWaitingMinutes?: number;
+    highRiskCount?: number;
+    objectiveScore?: number;
+    backtracks?: number;
+  };
+  suggestions: {
+    suggestionCount: number;
+    suggestions: ScheduleSuggestion[];
+    diagnosticsSummary: {
+      totalIssues: number;
+      criticalIssues: number;
+      highIssues: number;
+    };
+  };
+  comparison: {
+    items: ComparisonItem[];
+    movedCount: number;
+    unchangedCount: number;
+    addedCount: number;
+    removedCount: number;
+    resolvedIssuesCount: number;
+    remainingIssuesCount: number;
+    remainingIssues: DiagnosticIssue[];
+  };
+}
+

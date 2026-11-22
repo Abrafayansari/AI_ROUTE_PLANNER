@@ -136,8 +136,8 @@ export const ClusteringPage: React.FC<ClusteringPageProps> = ({ onNotify }) => {
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-slate-200 bg-white px-5 py-3.5 text-xs text-slate-600">
-        <span className="font-semibold text-slate-900">Week 12 · Unsupervised Learning (K-Means):</span>{' '}
-        Groups nearby distributors into geographic territories based purely on Haversine coordinate similarity (initialization → assignment → centroid update → convergence). K-Means creates spatial groups; it does not compute the final visit order or road route.
+        <span className="font-semibold text-slate-900">Geographic Territory Clustering:</span>{' '}
+        Partitions nearby distributors into balanced sales territories using spatial coordinate clustering for efficient regional coverage.
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
