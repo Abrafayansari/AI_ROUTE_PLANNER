@@ -319,6 +319,7 @@ def repair_schedule_quick_fix(
 
     scheduled: list[dict[str, Any]] = []
     unscheduled: list[dict[str, Any]] = []
+    accounted_ids: set[str] = set()
 
     current_time = work_start
     prev_did = str(office["id"])
@@ -331,16 +332,10 @@ def repair_schedule_quick_fix(
         did = str(entry.get("distributor_id") or entry.get("distributorId"))
         d_info = dist_map.get(did)
         if not d_info:
-            unscheduled.append({
-                "distributorId": did,
-                "distributorName": entry.get("distributor_name", "Unknown"),
-                "priority": entry.get("priority", 3),
-                "visitDurationMinutes": entry.get("visit_duration_minutes", 30),
-                "openingTime": "08:00",
-                "closingTime": "18:00",
-                "reason": "Distributor record not found in database.",
-            })
             continue
+        if did in accounted_ids:
+            continue
+        accounted_ids.add(did)
 
         if len(scheduled) >= max_visits:
             unscheduled.append({
@@ -447,6 +442,24 @@ def repair_schedule_quick_fix(
         prev_did = did
         prev_lat = d_lat
         prev_lng = d_lng
+
+    for d_info in normalized_dists:
+        did = str(d_info["id"])
+        if did in accounted_ids:
+            continue
+        unscheduled.append({
+            "distributorId": did,
+            "distributorName": d_info["name"],
+            "priority": int(d_info["priority"]),
+            "visitDurationMinutes": int(d_info["visit_duration_minutes"]),
+            "openingTime": d_info["opening_time"],
+            "closingTime": d_info["closing_time"],
+            "reason": (
+                "Not included in the existing schedule; Quick Fix preserves the existing "
+                "visit order and does not add new visits."
+            ),
+        })
+        accounted_ids.add(did)
 
     exec_time = round((time.perf_counter() - start_t) * 1000.0, 3)
 

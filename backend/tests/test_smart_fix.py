@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytest
 
 from app import create_app
@@ -244,6 +244,145 @@ def test_quick_fix_unscheduled_when_cannot_fit(app_ctx):
     assert len(repaired["unscheduled"]) == 1
     assert repaired["unscheduled"][0]["distributorId"] == "d2"
     assert "closing time" in repaired["unscheduled"][0]["reason"]
+
+
+def test_quick_fix_accounts_for_selected_distributors_missing_from_existing_schedule(app_ctx):
+    existing_ids = {
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+        "33333333-3333-3333-3333-333333333333",
+    }
+
+    missing_names = [
+        "DHA Suffa University (Demo)",
+        "IBA Karachi (Main Campus - Demo)",
+        "Indus University (Demo)",
+        "Iqra University (Main Campus - Demo)",
+        "Sir Syed University of Engineering & Technology (Demo)",
+    ]
+    for index in range(4, 13):
+        distributor = Distributor(
+            id=f"{index:08d}-0000-0000-0000-{index:012d}",
+            name=missing_names[index - 8] if index >= 8 else f"Existing Distributor {index}",
+            contact_person="Test Contact",
+            phone=f"03001234{index:03d}",
+            address=f"Test Address {index}",
+            latitude=24.86,
+            longitude=67.05,
+            priority=3,
+            visit_duration_minutes=30,
+            opening_time="09:00",
+            closing_time="17:00",
+            is_active=True,
+        )
+        db.session.add(distributor)
+        if index <= 7:
+            existing_ids.add(distributor.id)
+
+    db.session.flush()
+    selected = (
+        db.session.query(Distributor)
+        .filter(Distributor.is_active.is_(True))
+        .order_by(Distributor.name.asc())
+        .all()
+    )
+    assert len(selected) == 12
+
+    plan = RoutePlan(
+        name="Quick Fix Seven-Visit Plan",
+        plan_date=datetime.now(timezone.utc).date(),
+        office_id="c0000000-0000-0000-0000-000000000001",
+    )
+    db.session.add(plan)
+    db.session.flush()
+
+    existing = [d for d in selected if str(d.id) in existing_ids]
+    assert len(existing) == 7
+    for index, distributor in enumerate(existing):
+        hour = 9 + index // 4
+        minute = (index % 4) * 15
+        start = datetime(2026, 11, 21, hour, minute, tzinfo=timezone.utc)
+        db.session.add(
+            ScheduleEntry(
+                route_plan_id=str(plan.id),
+                distributor_id=str(distributor.id),
+                distributor_name=distributor.name,
+                scheduled_start=start,
+                scheduled_end=start + timedelta(minutes=30),
+                visit_duration_minutes=30,
+                priority=distributor.priority,
+            )
+        )
+    db.session.commit()
+
+    selected_ids = {str(d.id) for d in selected}
+    preview = smart_fix_schedule(
+        {
+            "mode": "QUICK_FIX",
+            "routePlanId": str(plan.id),
+            "officeId": "c0000000-0000-0000-0000-000000000001",
+            "distributorIds": list(selected_ids),
+            "scheduleDate": "2026-11-21",
+            "workStartTime": "09:00",
+            "workEndTime": "17:00",
+            "travelBufferMinutes": 0,
+            "lunchBreakEnabled": False,
+            "maxVisitsPerDay": 4,
+            "useRoadTravelTimes": False,
+        }
+    )
+    proposal = preview["activeProposal"]
+    scheduled_ids = [str(entry["distributorId"]) for entry in proposal["scheduled"]]
+    unscheduled_ids = [str(entry["distributorId"]) for entry in proposal["unscheduled"]]
+    accounted_ids = scheduled_ids + unscheduled_ids
+    missing_selected_ids = selected_ids - existing_ids
+    unscheduled_by_id = {
+        str(entry["distributorId"]): entry for entry in proposal["unscheduled"]
+    }
+
+    assert len(proposal["scheduled"]) == 4
+    assert len(proposal["unscheduled"]) == 8
+    assert scheduled_ids == [str(d.id) for d in existing[:4]]
+    assert set(accounted_ids) == selected_ids
+    assert len(accounted_ids) == len(set(accounted_ids))
+    assert set(scheduled_ids).isdisjoint(unscheduled_ids)
+    assert missing_selected_ids.issubset(unscheduled_by_id)
+    for distributor_id in missing_selected_ids:
+        reason = unscheduled_by_id[distributor_id]["reason"].lower()
+        assert "not included in the existing schedule" in reason
+        assert "does not add new visits" in reason
+
+
+def test_quick_fix_deduplicates_existing_entries_and_ignores_unselected_entries(app_ctx):
+    office = {"id": "c0000000-0000-0000-0000-000000000001", "name": "Office", "latitude": 24.86, "longitude": 67.0}
+    d1 = {"id": "d1", "name": "Selected One", "latitude": 24.81, "longitude": 67.02, "opening_time": "09:00", "closing_time": "18:00", "priority": 5, "visit_duration_minutes": 30}
+    d2 = {"id": "d2", "name": "Selected Two", "latitude": 24.85, "longitude": 67.01, "opening_time": "09:00", "closing_time": "18:00", "priority": 3, "visit_duration_minutes": 30}
+    entry = {
+        "distributorId": "d1",
+        "distributorName": "Selected One",
+        "startTime": "09:00",
+        "endTime": "09:30",
+        "visit_duration_minutes": 30,
+    }
+
+    repaired = repair_schedule_quick_fix(
+        [entry, dict(entry), {"distributorId": "not-selected"}],
+        office,
+        [d1, d2],
+        {
+            "workStartTime": "09:00",
+            "workEndTime": "17:00",
+            "travelBufferMinutes": 0,
+            "lunchBreakEnabled": False,
+        },
+    )
+    scheduled_ids = [entry["distributorId"] for entry in repaired["scheduled"]]
+    unscheduled_ids = [entry["distributorId"] for entry in repaired["unscheduled"]]
+    accounted_ids = scheduled_ids + unscheduled_ids
+
+    assert set(accounted_ids) == {"d1", "d2"}
+    assert len(accounted_ids) == len(set(accounted_ids))
+    assert set(scheduled_ids).isdisjoint(unscheduled_ids)
 
 
 def test_smart_optimize_improves_or_satisfies_hard_constraints(app_ctx):

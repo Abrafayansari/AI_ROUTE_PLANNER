@@ -620,7 +620,7 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
             <span>SQLite Connected</span>
           </div>
 
-          <button
+          {/* <button
             type="button"
             onClick={() => handleOpenSmartFix('QUICK_FIX')}
             className="inline-flex items-center gap-1.5 rounded-md border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100 shadow-xs"
@@ -628,7 +628,7 @@ export const SchedulingPage: React.FC<SchedulingPageProps> = ({ onNotify }) => {
           >
             <Sparkles className="h-3.5 w-3.5 text-purple-600" />
             <span>Smart Fix</span>
-          </button>
+          </button> */}
 
           <button
             type="button"
